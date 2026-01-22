@@ -1,36 +1,57 @@
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
 import os
+from langchain_community.document_loaders import (
+    TextLoader,
+    PyPDFLoader,
+    Docx2txtLoader
+)
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 
-DATA_PATH = "data/raw_docs"
-INDEX_PATH = "data/faiss_index"
+RAW_DIR = "data/raw_docs"
+INDEX_DIR = "data/faiss_index"
 
 
-def ingest_docs():
+def load_documents():
     documents = []
 
-    for filename in os.listdir(DATA_PATH):
-        if filename.endswith(".txt"):
-            loader = TextLoader(os.path.join(DATA_PATH, filename), encoding="utf-8")
-            documents.extend(loader.load())
+    for file in os.listdir(RAW_DIR):
+        path = os.path.join(RAW_DIR, file)
+
+        if file.endswith(".txt"):
+            loader = TextLoader(path, encoding="utf-8")
+        elif file.endswith(".pdf"):
+            loader = PyPDFLoader(path)
+        elif file.endswith(".docx"):
+            loader = Docx2txtLoader(path)
+        else:
+            continue
+
+        documents.extend(loader.load())
+
+    return documents
+
+
+def ingest():
+    docs = load_documents()
+    if not docs:
+        raise ValueError("Không có tài liệu nào trong data/raw_docs")
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
-        chunk_overlap=50
+        chunk_overlap=100
     )
-
-    docs = splitter.split_documents(documents)
+    chunks = splitter.split_documents(docs)
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    db = FAISS.from_documents(docs, embeddings)
-    db.save_local(INDEX_PATH)
+    vectorstore = FAISS.from_documents(chunks, embeddings)
+    vectorstore.save_local(INDEX_DIR)
+
+    print("✅ Ingest hoàn tất – FAISS index đã được tạo")
 
 
 if __name__ == "__main__":
-    ingest_docs()
+    ingest()
