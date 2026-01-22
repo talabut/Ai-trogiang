@@ -9,3 +9,21 @@ Dự án AI trợ giảng sử dụng kiến trúc **RAG (Retrieval-Augmented Ge
 
 ## 1. Cấu trúc dự án
 
+backend/
+agent/ # AI tutor logic
+rag/ # ingest + retriever
+api/ # FastAPI endpoints
+main.py
+data/
+raw_docs/ # tài liệu đầu vào (GV upload)
+faiss_index/ # vector database
+
+
+---
+
+## 2. Cài đặt môi trường
+
+```bash
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
