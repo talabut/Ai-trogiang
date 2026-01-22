@@ -1,10 +1,18 @@
+# Python
 venv/
 __pycache__/
 *.pyc
 
+# Env
 .env
 
+# Vector DB & raw data (ignore content, keep folder)
 data/raw_docs/*
 data/faiss_index/*
 
+# Keep folders
+!data/raw_docs/.gitkeep
+!data/faiss_index/.gitkeep
+
+# OS
 .DS_Store
