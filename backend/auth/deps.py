@@ -1,12 +1,8 @@
-from fastapi import Header, HTTPException
-from backend.auth.security import verify_token
+from backend.auth.roles import UserRole
 
-
-def require_teacher(authorization: str = Header(...)):
-    token = authorization.replace("Bearer ", "")
-    payload = verify_token(token)
-
-    if not payload or payload.get("role") != "teacher":
-        raise HTTPException(status_code=403, detail="Teacher only")
-
-    return payload
+def get_current_user():
+    # MVP giả lập, sau này nối JWT
+    return {
+        "id": "demo_user",
+        "role": UserRole.TEACHER
+    }

@@ -1,18 +1,62 @@
+############################
 # Python
+############################
 venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
 
-# Env
+############################
+# Environment / Secrets
+############################
 .env
+.env.*
+.env.docker
 
-# Vector DB & raw data (ignore content, keep folder)
+############################
+# Node / Frontend
+############################
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+yarn-error.log*
+
+############################
+# Vector DB & Uploaded Data
+############################
 data/raw_docs/*
 data/faiss_index/*
+data/chroma/*
+data/vectorstore/*
 
-# Keep folders
+# Giữ folder rỗng
 !data/raw_docs/.gitkeep
 !data/faiss_index/.gitkeep
 
-# OS
+############################
+# AI / ML cache
+############################
+.cache/
+models/
+
+############################
+# Docker
+############################
+*.log
+docker-compose.override.yml
+
+############################
+# OS / Editor
+############################
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+############################
+# Build artifacts
+############################
+*.sqlite3
+*.db
