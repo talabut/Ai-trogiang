@@ -1,57 +1,20 @@
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.document_loaders import PyPDFLoader
 import os
-from langchain_community.document_loaders import (
-    TextLoader,
-    PyPDFLoader,
-    Docx2txtLoader
-)
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 
-RAW_DIR = "data/raw_docs"
-INDEX_DIR = "data/faiss_index"
+BASE_INDEX_DIR = "data/faiss_index"
 
-
-def load_documents():
-    documents = []
-
-    for file in os.listdir(RAW_DIR):
-        path = os.path.join(RAW_DIR, file)
-
-        if file.endswith(".txt"):
-            loader = TextLoader(path, encoding="utf-8")
-        elif file.endswith(".pdf"):
-            loader = PyPDFLoader(path)
-        elif file.endswith(".docx"):
-            loader = Docx2txtLoader(path)
-        else:
-            continue
-
-        documents.extend(loader.load())
-
-    return documents
-
-
-def ingest():
-    docs = load_documents()
-    if not docs:
-        raise ValueError("Không có tài liệu nào trong data/raw_docs")
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100
-    )
-    chunks = splitter.split_documents(docs)
+def ingest_document(file_path: str, course_id: str):
+    loader = PyPDFLoader(file_path)
+    docs = loader.load()
 
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    vectorstore = FAISS.from_documents(chunks, embeddings)
-    vectorstore.save_local(INDEX_DIR)
+    course_dir = os.path.join(BASE_INDEX_DIR, course_id)
+    os.makedirs(course_dir, exist_ok=True)
 
-    print("✅ Ingest hoàn tất – FAISS index đã được tạo")
-
-
-if __name__ == "__main__":
-    ingest()
+    db = FAISS.from_documents(docs, embeddings)
+    db.save_local(course_dir)

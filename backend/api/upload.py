@@ -1,27 +1,21 @@
-import shutil
 from fastapi import APIRouter, UploadFile, Depends
+import os
+from backend.rag.ingest import ingest_document
+from backend.auth.deps import get_current_user
 
-from backend.auth.deps import require_teacher
-from backend.rag.ingest import ingest
+router = APIRouter(prefix="/upload", tags=["Upload"])
 
 UPLOAD_DIR = "data/raw_docs"
 
-router = APIRouter(prefix="/upload")
-
-
 @router.post("/")
-def upload_file(
-    file: UploadFile,
-    user=Depends(require_teacher)
-):
-    path = f"{UPLOAD_DIR}/{file.filename}"
+def upload(course_id: str, file: UploadFile, user=Depends(get_current_user)):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-    with open(path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
 
-    ingest()
+    with open(file_path, "wb") as f:
+        f.write(file.file.read())
 
-    return {
-        "status": "uploaded & ingested",
-        "filename": file.filename
-    }
+    ingest_document(file_path, course_id)
+
+    return {"status": "uploaded", "course_id": course_id}

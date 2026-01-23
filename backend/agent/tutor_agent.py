@@ -2,7 +2,6 @@ from langchain.chains import RetrievalQA
 from langchain_community.llms import HuggingFacePipeline
 from transformers import pipeline
 
-from backend.agent.prompt import SYSTEM_PROMPT
 from backend.rag.retriever import get_retriever
 from backend.guardrails.grounding import check_grounding
 
@@ -16,20 +15,19 @@ def get_llm():
     return HuggingFacePipeline(pipeline=pipe)
 
 
-def get_tutor_agent():
+def get_tutor_agent(course_id: str):
     llm = get_llm()
-    retriever = get_retriever()
+    retriever = get_retriever(course_id)
 
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         retriever=retriever,
-        chain_type="stuff",
         return_source_documents=True
     )
 
-    def guarded_run(query: str):
+    def run(query: str):
         result = qa_chain(query)
         check_grounding(result["source_documents"])
         return result
 
-    return guarded_run
+    return run

@@ -1,22 +1,18 @@
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
 import os
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
-INDEX_DIR = "data/faiss_index"
+BASE_INDEX_DIR = "data/faiss_index"
 
-
-def get_retriever():
-    if not os.path.exists(INDEX_DIR):
-        raise ValueError("Chưa ingest tài liệu. Hãy chạy ingest.py")
-
+def get_retriever(course_id: str):
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    db = FAISS.load_local(
-        INDEX_DIR,
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
+    index_path = os.path.join(BASE_INDEX_DIR, course_id)
 
-    return db.as_retriever(search_kwargs={"k": 3})
+    if not os.path.exists(index_path):
+        raise ValueError("Course chưa có dữ liệu")
+
+    db = FAISS.load_local(index_path, embeddings)
+    return db.as_retriever()
