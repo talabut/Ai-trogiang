@@ -1,3 +1,5 @@
 def validate_groundedness(answer, sources):
     if not sources:
-        raise ValueError("Không có tài liệu nguồn")
+        raise ValueError(
+            "Nội dung sinh ra không có căn cứ từ tài liệu."
+        )

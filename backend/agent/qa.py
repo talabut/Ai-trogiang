@@ -1,66 +1,81 @@
-# backend/agent/qa.py
-
-from typing import List
+from typing import Dict, Any, List
 from langchain.schema import Document
-from backend.vectorstore.faiss_store import get_faiss_store
+
+from backend.rag.hybrid_retriever import hybrid_search
 from backend.llm.llm import get_llm
+from backend.utils.citation import format_apa, format_ieee
 
-# =====================
-# CONFIG
-# =====================
-SIMILARITY_THRESHOLD = 0.4
 TOP_K = 5
+HYBRID_THRESHOLD = 0.15
+
+WATERMARK = (
+    "\n\n— AI Trợ Giảng\n"
+    "Nội dung này được tạo tự động dựa trên tài liệu học tập nội bộ. "
+    "Không thay thế tài liệu chính thức."
+)
 
 
-def retrieve_context(question: str) -> List[Document]:
+def answer_question(question: str) -> Dict[str, Any]:
     """
-    Retrieve documents with similarity score filtering
-    """
-
-    vectorstore = get_faiss_store()
-
-    results = vectorstore.similarity_search_with_score(
-        question,
-        k=TOP_K
-    )
-
-    valid_docs = []
-
-    for doc, score in results:
-        # FAISS: score càng nhỏ càng giống
-        if score <= SIMILARITY_THRESHOLD:
-            valid_docs.append(doc)
-
-    return valid_docs
-
-
-def answer_question(question: str) -> dict:
-    """
-    Answer only if relevant context exists
+    Answer question using Hybrid Search (FAISS + BM25)
+    with strict threshold, citation, traceability, audit-ready
     """
 
-    docs = retrieve_context(question)
+    results = hybrid_search(question)
 
-    # ❌ KHÔNG đủ ngữ cảnh → TỪ CHỐI
-    if not docs:
+    if not results:
         return {
-            "answer": "Không tìm thấy thông tin phù hợp trong tài liệu.",
-            "sources": []
+            "answer": "Tôi không tìm thấy thông tin phù hợp trong tài liệu đã cung cấp.",
+            "sources": [],
+            "citations": {"apa": [], "ieee": []}
         }
 
-    context = "\n\n".join(doc.page_content for doc in docs)
+    # --- Apply hybrid threshold ---
+    filtered: List[tuple[Document, float]] = [
+        (doc, score)
+        for doc, score in results[:TOP_K]
+        if score >= HYBRID_THRESHOLD
+    ]
+
+    if not filtered:
+        return {
+            "answer": (
+                "Tôi không đủ thông tin từ tài liệu hiện có để trả lời câu hỏi này. "
+                "Vui lòng tham khảo thêm tài liệu hoặc hỏi lại với nội dung cụ thể hơn."
+            ),
+            "sources": [],
+            "citations": {"apa": [], "ieee": []}
+        }
+
+    # --- Build sources ---
+    sources = []
+    context_parts = []
+
+    for idx, (doc, score) in enumerate(filtered):
+        sources.append({
+            "source_file": doc.metadata.get("source_file"),
+            "page": doc.metadata.get("page"),
+            "section": doc.metadata.get("section"),
+            "chunk_id": doc.metadata.get("chunk_id"),
+            "score": round(score, 4),
+            "preview": doc.page_content[:200]
+        })
+
+        context_parts.append(
+            f"[CHUNK_{idx}]\n{doc.page_content}"
+        )
+
+    context = "\n\n".join(context_parts)
 
     prompt = f"""
-Bạn là AI trợ giảng.
-Chỉ được sử dụng thông tin trong TÀI LIỆU bên dưới.
-Nếu tài liệu không đủ thông tin để trả lời câu hỏi,
-hãy trả lời đúng một câu:
-"Không tìm thấy thông tin phù hợp trong tài liệu."
+Bạn là AI Trợ Giảng.
 
-====================
+CHỈ sử dụng thông tin trong các CHUNK bên dưới.
+Mỗi ý chính PHẢI kết thúc bằng tag [CHUNK_x] tương ứng.
+Nếu không đủ thông tin từ các CHUNK, hãy từ chối trả lời.
+
 TÀI LIỆU:
 {context}
-====================
 
 CÂU HỎI:
 {question}
@@ -69,9 +84,15 @@ TRẢ LỜI:
 """
 
     llm = get_llm()
-    answer = llm.invoke(prompt)
+    answer = llm.invoke(prompt).strip() + WATERMARK
+
+    citations = {
+        "apa": [format_apa(s) for s in sources],
+        "ieee": [format_ieee(s, i + 1) for i, s in enumerate(sources)]
+    }
 
     return {
         "answer": answer,
-        "sources": docs
+        "sources": sources,
+        "citations": citations
     }

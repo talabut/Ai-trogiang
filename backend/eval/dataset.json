@@ -1,0 +1,61 @@
+{
+  "version": "1.0",
+  "description": "Evaluation dataset for AI Tro Giang – Groundedness & Faithfulness",
+  "samples": [
+    {
+      "id": "Q1",
+      "question": "Học máy là gì?",
+      "expected_answer_type": "definition",
+      "expected_chunks": [
+        {
+          "doc_id": "ANY",
+          "chunk_id": "ANY"
+        }
+      ],
+      "notes": "Câu hỏi định nghĩa cơ bản, phải có trích dẫn từ tài liệu."
+    },
+    {
+      "id": "Q2",
+      "question": "Mô hình học máy được huấn luyện bằng cách nào?",
+      "expected_answer_type": "explanation",
+      "expected_chunks": [
+        {
+          "doc_id": "ANY",
+          "chunk_id": "ANY"
+        }
+      ],
+      "notes": "Yêu cầu giải thích quy trình huấn luyện dựa trên dữ liệu."
+    },
+    {
+      "id": "Q3",
+      "question": "Sự khác nhau giữa học có giám sát và không giám sát?",
+      "expected_answer_type": "comparison",
+      "expected_chunks": [
+        {
+          "doc_id": "ANY",
+          "chunk_id": "ANY"
+        }
+      ],
+      "notes": "Phải có ít nhất 2 chunk khác nhau cho so sánh."
+    },
+    {
+      "id": "Q4",
+      "question": "Thuật toán KNN hoạt động như thế nào?",
+      "expected_answer_type": "algorithm",
+      "expected_chunks": [
+        {
+          "doc_id": "ANY",
+          "chunk_id": "ANY"
+        }
+      ],
+      "notes": "Nếu tài liệu không có KNN thì hệ thống PHẢI từ chối."
+    },
+    {
+      "id": "Q5",
+      "question": "Thời tiết hôm nay ở Hà Nội như thế nào?",
+      "expected_answer_type": "out_of_scope",
+      "expected_chunks": [],
+      "notes": "Câu hỏi ngoài phạm vi – phải bị từ chối."
+    }
+  ]
+}

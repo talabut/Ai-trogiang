@@ -1,0 +1,1838 @@
+
+==============================
+FILE: D:\ai-tro-giang\backend\agent\__init__.py
+==============================
+
+
+==============================
+FILE: D:\ai-tro-giang\backend\agent\prompt.py
+==============================
+
+SYSTEM_PROMPT = """
+B?n là AI tr? gi?ng h?c thu?t.
+
+Quy t?c b?t bu?c:
+- Ch? tr? l?i d?a trên n?i dung tài li?u du?c cung c?p.
+- N?u không tìm th?y thông tin trong tài li?u, hãy tr? l?i: 
+  "Tôi không tìm th?y thông tin trong tài li?u."
+- Không du?c suy doán ho?c b?a.
+- Tr? l?i ng?n g?n, dúng tr?ng tâm.
+"""
+
+==============================
+FILE: D:\ai-tro-giang\backend\agent\qa.py
+==============================
+
+from typing import Dict, Any, List
+from langchain.schema import Document
+
+from backend.rag.hybrid_retriever import hybrid_search
+from backend.llm.llm import get_llm
+from backend.utils.citation import format_apa, format_ieee
+
+TOP_K = 5
+HYBRID_THRESHOLD = 0.15
+
+WATERMARK = (
+    "\n\n— AI Tr? Gi?ng\n"
+    "N?i dung này du?c t?o t? d?ng d?a trên tài li?u h?c t?p n?i b?. "
+    "Không thay th? tài li?u chính th?c."
+)
+
+
+def answer_question(question: str) -> Dict[str, Any]:
+    """
+    Answer question using Hybrid Search (FAISS + BM25)
+    with strict threshold, citation, traceability, audit-ready
+    """
+
+    results = hybrid_search(question)
+
+    if not results:
+        return {
+            "answer": "Tôi không tìm th?y thông tin phù h?p trong tài li?u dã cung c?p.",
+            "sources": [],
+            "citations": {"apa": [], "ieee": []}
+        }
+
+    # --- Apply hybrid threshold ---
+    filtered: List[tuple[Document, float]] = [
+        (doc, score)
+        for doc, score in results[:TOP_K]
+        if score >= HYBRID_THRESHOLD
+    ]
+
+    if not filtered:
+        return {
+            "answer": (
+                "Tôi không d? thông tin t? tài li?u hi?n có d? tr? l?i câu h?i này. "
+                "Vui lòng tham kh?o thêm tài li?u ho?c h?i l?i v?i n?i dung c? th? hon."
+            ),
+            "sources": [],
+            "citations": {"apa": [], "ieee": []}
+        }
+
+    # --- Build sources ---
+    sources = []
+    context_parts = []
+
+    for idx, (doc, score) in enumerate(filtered):
+        sources.append({
+            "source_file": doc.metadata.get("source_file"),
+            "page": doc.metadata.get("page"),
+            "section": doc.metadata.get("section"),
+            "chunk_id": doc.metadata.get("chunk_id"),
+            "score": round(score, 4),
+            "preview": doc.page_content[:200]
+        })
+
+        context_parts.append(
+            f"[CHUNK_{idx}]\n{doc.page_content}"
+        )
+
+    context = "\n\n".join(context_parts)
+
+    prompt = f"""
+B?n là AI Tr? Gi?ng.
+
+CH? s? d?ng thông tin trong các CHUNK bên du?i.
+M?i ý chính PH?I k?t thúc b?ng tag [CHUNK_x] tuong ?ng.
+N?u không d? thông tin t? các CHUNK, hãy t? ch?i tr? l?i.
+
+TÀI LI?U:
+{context}
+
+CÂU H?I:
+{question}
+
+TR? L?I:
+"""
+
+    llm = get_llm()
+    answer = llm.invoke(prompt).strip() + WATERMARK
+
+    citations = {
+        "apa": [format_apa(s) for s in sources],
+        "ieee": [format_ieee(s, i + 1) for i, s in enumerate(sources)]
+    }
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "citations": citations
+    }
+
+==============================
+FILE: D:\ai-tro-giang\backend\api\__init__.py
+==============================
+
+
+==============================
+FILE: D:\ai-tro-giang\backend\api\auth.py
+==============================
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from backend.auth.users import authenticate
+from backend.auth.security import create_access_token
+
+router = APIRouter(prefix="/auth")
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/login")
+def login(req: LoginRequest):
+    user = authenticate(req.username, req.password)
+    if not user:
+        return {"error": "Invalid credentials"}
+
+    token = create_access_token({
+        "sub": user["username"],
+        "role": user["role"]
+    })
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": user["role"]
+    }
+
+==============================
+FILE: D:\ai-tro-giang\backend\api\chat.py
+==============================
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+from backend.agent.qa import answer_question
+from backend.logging.audit import audit_log
+
+router = APIRouter()
+
+
+class ChatRequest(BaseModel):
+    question: str
+
+
+@router.post("/chat")
+def chat(req: ChatRequest):
+    result = answer_question(req.question)
+
+    audit_log(
+        user="anonymous",   # có th? thay b?ng user th?t sau
+        action="chat",
+        payload={
+            "question": req.question,
+            "answer": result.get("answer"),
+            "sources": result.get("sources"),
+        }
+    )
+
+    return result
+
+==============================
+FILE: D:\ai-tro-giang\backend\api\courses.py
+==============================
+
+from fastapi import APIRouter, Depends
+from backend.courses.service import create_course, list_courses_by_owner
+from backend.auth.deps import get_current_user
+
+router = APIRouter(prefix="/courses", tags=["Courses"])
+
+@router.post("/create")
+def create(course_id: str, name: str, user=Depends(get_current_user)):
+    return create_course(course_id, name, user["id"])
+
+@router.get("/my")
+def my_courses(user=Depends(get_current_user)):
+    return list_courses_by_owner(user["id"])
+
+==============================
+FILE: D:\ai-tro-giang\backend\api\eval.py
+==============================
+
+from fastapi import APIRouter, Depends
+from backend.eval.runner import run_evaluation
+from backend.auth.deps import get_current_user
+from backend.auth.roles import UserRole
+
+router = APIRouter(prefix="/eval", tags=["Evaluation"])
+
+
+@router.post("/run")
+def run_eval(user=Depends(get_current_user)):
+    if user["role"] != UserRole.TEACHER:
+        return {"error": "Ch? gi?ng viên m?i du?c ch?y dánh giá"}
+    return run_evaluation()
+
+==============================
+FILE: D:\ai-tro-giang\backend\api\pedagogy.py
+==============================
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import List
+
+from backend.pedagogy.bloom import BloomLevel
+from backend.pedagogy.generator import (
+    generate_questions,
+    generate_assignments
+)
+from backend.pedagogy.rubric import generate_rubric
+
+
+router = APIRouter(prefix="/pedagogy", tags=["Pedagogy"])
+
+
+class QuestionRequest(BaseModel):
+    topic: str
+    bloom_level: BloomLevel
+    num_items: int = 3
+
+
+class AssignmentRequest(BaseModel):
+    topic: str
+    bloom_level: BloomLevel
+    num_items: int = 2
+
+
+class RubricRequest(BaseModel):
+    topic: str
+    bloom_level: BloomLevel
+
+
+@router.post("/questions")
+def pedagogy_questions(req: QuestionRequest):
+    try:
+        return {
+            "topic": req.topic,
+            "bloom_level": req.bloom_level,
+            "items": generate_questions(
+                topic=req.topic,
+                bloom=req.bloom_level,
+                num_items=req.num_items
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/assignments")
+def pedagogy_assignments(req: AssignmentRequest):
+    try:
+        return {
+            "topic": req.topic,
+            "bloom_level": req.bloom_level,
+            "items": generate_assignments(
+                topic=req.topic,
+                bloom=req.bloom_level,
+                num_items=req.num_items
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/rubric")
+def pedagogy_rubric(req: RubricRequest):
+    try:
+        return {
+            "topic": req.topic,
+            "bloom_level": req.bloom_level,
+            "rubric": generate_rubric(
+                topic=req.topic,
+                bloom=req.bloom_level
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+==============================
+FILE: D:\ai-tro-giang\backend\api\upload.py
+==============================
+
+from fastapi import APIRouter, UploadFile, Depends
+import os
+from backend.rag.ingest import ingest_document
+from backend.auth.deps import get_current_user
+
+router = APIRouter(prefix="/upload", tags=["Upload"])
+
+UPLOAD_DIR = "data/raw_docs"
+
+@router.post("/")
+def upload(course_id: str, file: UploadFile, user=Depends(get_current_user)):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+
+    with open(file_path, "wb") as f:
+        f.write(file.file.read())
+
+    ingest_document(file_path, course_id)
+
+    return {"status": "uploaded", "course_id": course_id}
+
+==============================
+FILE: D:\ai-tro-giang\backend\auth\deps.py
+==============================
+
+from backend.auth.roles import UserRole
+
+def get_current_user():
+    # MVP gi? l?p, sau này n?i JWT
+    return {
+        "id": "demo_user",
+        "role": UserRole.TEACHER
+    }
+
+==============================
+FILE: D:\ai-tro-giang\backend\auth\roles.py
+==============================
+
+from enum import Enum
+
+class UserRole(str, Enum):
+    STUDENT = "student"
+    TEACHER = "teacher"
+
+==============================
+FILE: D:\ai-tro-giang\backend\auth\security.py
+==============================
+
+from datetime import datetime, timedelta
+from jose import jwt, JWTError
+
+SECRET_KEY = "CHANGE_ME_SECRET"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def verify_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+==============================
+FILE: D:\ai-tro-giang\backend\auth\users.py
+==============================
+
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+users_db = {
+    "teacher1": {
+        "username": "teacher1",
+        "password": pwd_context.hash("123456"),
+        "role": "teacher"
+    },
+    "student1": {
+        "username": "student1",
+        "password": pwd_context.hash("123456"),
+        "role": "student"
+    }
+}
+
+
+def verify_password(plain, hashed):
+    return pwd_context.verify(plain, hashed)
+
+
+def authenticate(username: str, password: str):
+    user = users_db.get(username)
+    if not user:
+        return None
+    if not verify_password(password, user["password"]):
+        return None
+    return user
+
+==============================
+FILE: D:\ai-tro-giang\backend\courses\__init__.py
+==============================
+
+
+==============================
+FILE: D:\ai-tro-giang\backend\courses\access.py
+==============================
+
+def check_course_access(user, course):
+    if user["role"] == "teacher":
+        return course.owner_id == user["id"]
+    if user["role"] == "student":
+        # MVP: cho phép t?t c? SV (sau này g?n class)
+        return True
+    return False
+
+==============================
+FILE: D:\ai-tro-giang\backend\courses\models.py
+==============================
+
+from dataclasses import dataclass
+
+@dataclass
+class Course:
+    course_id: str
+    name: str
+    owner_id: str  # gi?ng viên
+
+==============================
+FILE: D:\ai-tro-giang\backend\courses\service.py
+==============================
+
+from backend.courses.models import Course
+
+# MVP: in-memory, sau này thay DB
+COURSES = {}
+
+def create_course(course_id: str, name: str, owner_id: str):
+    course = Course(course_id, name, owner_id)
+    COURSES[course_id] = course
+    return course
+
+def get_course(course_id: str):
+    return COURSES.get(course_id)
+
+def list_courses_by_owner(owner_id: str):
+    return [c for c in COURSES.values() if c.owner_id == owner_id]
+
+==============================
+FILE: D:\ai-tro-giang\backend\eval\__init__.py
+==============================
+
+
+==============================
+FILE: D:\ai-tro-giang\backend\eval\datasets.py
+==============================
+
+from dataclasses import dataclass
+from typing import List
+
+@dataclass
+class EvalSample:
+    question: str
+    expected_sources: List[str]  # filename ho?c keyword
+    difficulty: str              # easy / medium / hard
+
+
+EVAL_DATASET = [
+    EvalSample(
+        question="Ð?nh nghia trí tu? nhân t?o là gì?",
+        expected_sources=["ai_intro.pdf"],
+        difficulty="easy"
+    ),
+    EvalSample(
+        question="S? khác nhau gi?a supervised và unsupervised learning?",
+        expected_sources=["machine_learning.pdf"],
+        difficulty="medium"
+    ),
+]
+
+==============================
+FILE: D:\ai-tro-giang\backend\eval\evaluator.py
+==============================
+
+import json
+from typing import Dict, Any, List
+
+from backend.agent.qa import answer_question
+from backend.eval.groundedness import check_groundedness
+from backend.eval.faithfulness import check_faithfulness
+
+
+DATASET_PATH = "backend/eval/dataset.json"
+
+
+def load_dataset() -> Dict[str, Any]:
+    with open(DATASET_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def evaluate_sample(sample: Dict[str, Any]) -> Dict[str, Any]:
+    question = sample["question"]
+
+    result = answer_question(question)
+
+    answer = result.get("answer", "")
+    sources = result.get("sources", [])
+
+    contexts = [
+        src.get("preview", "")
+        for src in sources
+        if src.get("preview")
+    ]
+
+    groundedness = check_groundedness(answer, sources)
+    faithfulness = check_faithfulness(answer, contexts)
+
+    return {
+        "id": sample["id"],
+        "question": question,
+        "answer": answer,
+        "groundedness": groundedness,
+        "faithfulness": faithfulness,
+        "sources_count": len(sources)
+    }
+
+
+def run_evaluation() -> Dict[str, Any]:
+    dataset = load_dataset()
+    samples = dataset.get("samples", [])
+
+    results: List[Dict[str, Any]] = []
+
+    grounded_ok = 0
+    faithful_ok = 0
+
+    for sample in samples:
+        print(f"Evaluating: {sample['id']} – {sample['question']}")
+        result = evaluate_sample(sample)
+        results.append(result)
+
+        if result["groundedness"]["grounded"]:
+            grounded_ok += 1
+        if result["faithfulness"]["faithful"]:
+            faithful_ok += 1
+
+    total = len(samples)
+
+    summary = {
+        "total": total,
+        "groundedness_rate": round(grounded_ok / total, 2),
+        "faithfulness_rate": round(faithful_ok / total, 2)
+    }
+
+    report = {
+        "summary": summary,
+        "results": results
+    }
+
+    return report
+
+
+if __name__ == "__main__":
+    report = run_evaluation()
+    print("\n=== EVALUATION SUMMARY ===")
+    print(json.dumps(report["summary"], indent=2, ensure_ascii=False))
+
+==============================
+FILE: D:\ai-tro-giang\backend\eval\faithfulness.py
+==============================
+
+import re
+from typing import Dict, Any, List
+
+
+STOPWORDS = {
+    "là", "và", "c?a", "trong", "cho", "v?i", "m?t", "các",
+    "du?c", "khi", "này", "dó", "nhu", "d?"
+}
+
+
+def normalize(text: str) -> List[str]:
+    """
+    Normalize text into keyword tokens
+    """
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9à-?\s]", " ", text)
+    tokens = text.split()
+    return [t for t in tokens if t not in STOPWORDS and len(t) > 2]
+
+
+def extract_claim_sentences(answer: str) -> List[str]:
+    """
+    Split answer into claim sentences (remove chunk tags)
+    """
+    clean = re.sub(r"\[CHUNK_\d+\]", "", answer)
+    sentences = re.split(r"[.\n]", clean)
+    return [s.strip() for s in sentences if len(s.strip()) > 20]
+
+
+def check_faithfulness(
+    answer: str,
+    contexts: List[str],
+    min_overlap_ratio: float = 0.3
+) -> Dict[str, Any]:
+    """
+    Faithfulness check:
+    - Each claim sentence must overlap sufficiently with context keywords
+    """
+
+    context_text = " ".join(contexts)
+    context_tokens = set(normalize(context_text))
+
+    claims = extract_claim_sentences(answer)
+
+    if not claims:
+        return {
+            "faithful": False,
+            "reason": "NO_CLAIM_SENTENCE",
+            "details": "No valid claim sentence found in answer."
+        }
+
+    unfaithful_claims = []
+
+    for claim in claims:
+        claim_tokens = normalize(claim)
+
+        if not claim_tokens:
+            continue
+
+        overlap = set(claim_tokens) & context_tokens
+        overlap_ratio = len(overlap) / len(set(claim_tokens))
+
+        if overlap_ratio < min_overlap_ratio:
+            unfaithful_claims.append({
+                "claim": claim,
+                "overlap_ratio": round(overlap_ratio, 2)
+            })
+
+    if unfaithful_claims:
+        return {
+            "faithful": False,
+            "reason": "LOW_CONTEXT_OVERLAP",
+            "details": unfaithful_claims
+        }
+
+    return {
+        "faithful": True,
+        "reason": "OK",
+        "details": "All claims sufficiently supported by context."
+    }
+
+==============================
+FILE: D:\ai-tro-giang\backend\eval\groundedness.py
+==============================
+
+import re
+from typing import Dict, Any, List
+
+
+CHUNK_PATTERN = re.compile(r"\[CHUNK_(\d+)\]")
+
+
+def extract_chunk_ids(answer: str) -> List[int]:
+    """
+    Extract chunk indices from answer text.
+    Example: [CHUNK_0], [CHUNK_2] ? [0, 2]
+    """
+    return [int(x) for x in CHUNK_PATTERN.findall(answer)]
+
+
+def check_groundedness(
+    answer: str,
+    sources: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Groundedness check:
+    - Answer must contain chunk tags
+    - Chunk tags must exist in retrieved sources
+    """
+
+    chunk_ids_in_answer = extract_chunk_ids(answer)
+
+    if not chunk_ids_in_answer:
+        return {
+            "grounded": False,
+            "reason": "NO_CHUNK_TAG",
+            "details": "Answer does not contain any [CHUNK_x] tags."
+        }
+
+    valid_chunk_ids = {
+        src.get("chunk_id") for src in sources
+    }
+
+    invalid_refs = [
+        cid for cid in chunk_ids_in_answer
+        if cid not in valid_chunk_ids
+    ]
+
+    if invalid_refs:
+        return {
+            "grounded": False,
+            "reason": "INVALID_CHUNK_REFERENCE",
+            "details": f"Referenced chunk(s) not in sources: {invalid_refs}"
+        }
+
+    return {
+        "grounded": True,
+        "reason": "OK",
+        "details": f"All referenced chunks are valid: {chunk_ids_in_answer}"
+    }
+
+==============================
+FILE: D:\ai-tro-giang\backend\eval\metrics.py
+==============================
+
+def groundedness_score(sources, expected_sources):
+    if not sources:
+        return 0.0
+
+    matched = 0
+    for src in sources:
+        source_file = src.get("source_file", "")
+        if any(exp in source_file for exp in expected_sources):
+            matched += 1
+
+    return matched / len(expected_sources)
+
+
+def citation_coverage(sources):
+    if not sources:
+        return 0.0
+
+    cited = [s for s in sources if s.get("page") is not None]
+    return len(cited) / len(sources)
+
+
+def hallucination_flag(sources):
+    return len(sources) == 0
+
+==============================
+FILE: D:\ai-tro-giang\backend\eval\runner.py
+==============================
+
+from backend.eval.datasets import EVAL_DATASET
+from backend.eval.evaluator import evaluate_sample
+from backend.logging.audit import audit_log
+
+
+def run_evaluation():
+    results = []
+
+    for sample in EVAL_DATASET:
+        r = evaluate_sample(sample)
+        results.append(r)
+
+        audit_log(
+            user_id="system_eval",
+            action="eval",
+            payload=r
+        )
+
+    return results
+
+
+if __name__ == "__main__":
+    report = run_evaluation()
+    for r in report:
+        print(r)
+
+==============================
+FILE: D:\ai-tro-giang\backend\guardrails\citation.py
+==============================
+
+def format_citations(source_documents):
+    citations = []
+    for doc in source_documents:
+        meta = doc.metadata
+        citations.append({
+            "source": meta.get("source", "unknown"),
+            "page": meta.get("page", None)
+        })
+    return citations
+
+==============================
+FILE: D:\ai-tro-giang\backend\guardrails\grounding.py
+==============================
+
+from typing import List
+
+MIN_DOCS_REQUIRED = 1
+
+def check_grounding(source_documents: List):
+    if not source_documents or len(source_documents) < MIN_DOCS_REQUIRED:
+        raise ValueError(
+            "Không tìm th?y tài li?u liên quan. "
+            "H? th?ng không th? tr? l?i d? tránh sai l?ch h?c thu?t."
+        )
+
+==============================
+FILE: D:\ai-tro-giang\backend\guardrails\rate_limit.py
+==============================
+
+import time
+
+REQUEST_LIMIT = 20
+WINDOW_SECONDS = 60
+
+_user_requests = {}
+
+def check_rate_limit(user_id: str):
+    now = time.time()
+    timestamps = _user_requests.get(user_id, [])
+
+    timestamps = [t for t in timestamps if now - t < WINDOW_SECONDS]
+
+    if len(timestamps) >= REQUEST_LIMIT:
+        raise ValueError("B?n g?i quá nhi?u yêu c?u. Vui lòng th? l?i sau.")
+
+    timestamps.append(now)
+    _user_requests[user_id] = timestamps
+
+==============================
+FILE: D:\ai-tro-giang\backend\logging\audit.py
+==============================
+
+import json
+from datetime import datetime
+from pathlib import Path
+
+LOG_PATH = Path("data/audit.log")
+
+
+def audit_log(user: str, action: str, payload: dict):
+    """
+    Append audit log for academic integrity
+    """
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    record = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "user": user,
+        "action": action,
+        "payload": payload,
+    }
+
+    with open(LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+==============================
+FILE: D:\ai-tro-giang\backend\main.py
+==============================
+
+from fastapi import FastAPI
+
+from backend.api.chat import router as chat_router
+from backend.api.upload import router as upload_router
+from backend.api.auth import router as auth_router
+from backend.api.pedagogy import router as pedagogy_router
+from backend.api.eval import router as eval_router
+from backend.api.courses import router as courses_router
+from backend.api.pedagogy import router as pedagogy_router
+
+app = FastAPI(title="AI Tr? Gi?ng")
+
+app.include_router(auth_router)
+app.include_router(upload_router)
+app.include_router(chat_router)
+app.include_router(pedagogy_router)
+app.include_router(eval_router)
+app.include_router(courses_router)
+app.include_router(pedagogy_router)
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\__init__.py
+==============================
+
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\bloom.py
+==============================
+
+from enum import Enum
+from typing import List
+
+
+class BloomLevel(str, Enum):
+    """
+    Bloom's Taxonomy – Cognitive Domain
+    """
+
+    REMEMBER = "remember"
+    UNDERSTAND = "understand"
+    APPLY = "apply"
+    ANALYZE = "analyze"
+    EVALUATE = "evaluate"
+    CREATE = "create"
+
+    @property
+    def description(self) -> str:
+        return {
+            self.REMEMBER: "Nh? l?i thông tin, d?nh nghia, thu?t ng?",
+            self.UNDERSTAND: "Gi?i thích, mô t?, di?n gi?i ý nghia",
+            self.APPLY: "Áp d?ng ki?n th?c vào bài toán c? th?",
+            self.ANALYZE: "Phân tích, so sánh, ch? ra m?i quan h?",
+            self.EVALUATE: "Ðánh giá, nh?n xét, ph?n bi?n",
+            self.CREATE: "T?ng h?p, thi?t k?, xây d?ng m?i"
+        }[self]
+
+    @property
+    def action_verbs(self) -> List[str]:
+        """
+        G?i ý d?ng t? dùng trong câu h?i / bài t?p
+        """
+        return {
+            self.REMEMBER: ["li?t kê", "nêu", "d?nh nghia", "k? tên"],
+            self.UNDERSTAND: ["gi?i thích", "trình bày", "mô t?", "tóm t?t"],
+            self.APPLY: ["áp d?ng", "tính toán", "gi?i", "th?c hi?n"],
+            self.ANALYZE: ["phân tích", "so sánh", "phân lo?i", "làm rõ"],
+            self.EVALUATE: ["dánh giá", "nh?n xét", "ph?n bi?n", "so sánh uu nhu?c di?m"],
+            self.CREATE: ["thi?t k?", "xây d?ng", "d? xu?t", "phát tri?n"]
+        }[self]
+
+    @classmethod
+    def ordered_levels(cls) -> List["BloomLevel"]:
+        """
+        Tr? v? Bloom levels theo th? t? tang d?n d? khó
+        """
+        return [
+            cls.REMEMBER,
+            cls.UNDERSTAND,
+            cls.APPLY,
+            cls.ANALYZE,
+            cls.EVALUATE,
+            cls.CREATE
+        ]
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\generator.py
+==============================
+
+import json
+from typing import Dict, Any, List
+
+from backend.pedagogy.bloom import BloomLevel
+from backend.pedagogy.prompts import (
+    build_question_prompt,
+    build_assignment_prompt
+)
+from backend.rag.hybrid_retriever import hybrid_search
+from backend.llm.llm import get_llm
+
+
+CONTEXT_TOP_K = 5
+
+
+def retrieve_context(query: str) -> str:
+    """
+    Retrieve learning context using Hybrid Search
+    """
+    results = hybrid_search(query)
+    contexts = []
+
+    for doc, score in results[:CONTEXT_TOP_K]:
+        contexts.append(doc.page_content)
+
+    return "\n\n".join(contexts)
+
+
+def _invoke_llm(prompt: str) -> List[Dict[str, Any]]:
+    """
+    Invoke LLM and parse JSON output safely
+    """
+    llm = get_llm()
+    raw = llm.invoke(prompt)
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError(
+            "LLM output is not valid JSON. "
+            "Please refine prompt or model configuration."
+        )
+
+
+def generate_questions(
+    topic: str,
+    bloom: BloomLevel,
+    num_items: int = 3
+) -> List[Dict[str, Any]]:
+    """
+    Generate pedagogical questions based on Bloom level
+    """
+
+    context = retrieve_context(topic)
+
+    if not context.strip():
+        raise ValueError("No relevant learning material found.")
+
+    prompt = build_question_prompt(
+        context=context,
+        bloom=bloom,
+        num_items=num_items
+    )
+
+    return _invoke_llm(prompt)
+
+
+def generate_assignments(
+    topic: str,
+    bloom: BloomLevel,
+    num_items: int = 2
+) -> List[Dict[str, Any]]:
+    """
+    Generate pedagogical assignments based on Bloom level
+    """
+
+    context = retrieve_context(topic)
+
+    if not context.strip():
+        raise ValueError("No relevant learning material found.")
+
+    prompt = build_assignment_prompt(
+        context=context,
+        bloom=bloom,
+        num_items=num_items
+    )
+
+    return _invoke_llm(prompt)
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\prompts.py
+==============================
+
+from backend.pedagogy.bloom import BloomLevel
+
+
+QUESTION_PROMPT_TEMPLATE = """
+B?n là AI Tr? Gi?ng.
+
+NHI?M V?:
+Sinh {num_items} CÂU H?I h?c t?p theo m?c d? Bloom: {bloom_level}
+
+MÔ T? M?C Ð?:
+{bloom_description}
+
+YÊU C?U B?T BU?C:
+- CH? s? d?ng thông tin trong TÀI LI?U bên du?i
+- Không suy doán, không thêm ki?n th?c bên ngoài
+- M?i câu h?i ph?i bám sát n?i dung tài li?u
+- M?c d? nh?n th?c ph?i dúng Bloom level
+- Không trùng l?p câu h?i
+
+TÀI LI?U:
+{context}
+
+Ð?NH D?NG TR? V? (JSON):
+[
+  {{
+    "question": "...",
+    "bloom_level": "{bloom_level}",
+    "learning_objective": "...",
+    "difficulty": "easy | medium | hard"
+  }}
+]
+"""
+
+
+ASSIGNMENT_PROMPT_TEMPLATE = """
+B?n là AI Tr? Gi?ng.
+
+NHI?M V?:
+Sinh {num_items} BÀI T?P h?c t?p theo m?c d? Bloom: {bloom_level}
+
+MÔ T? M?C Ð?:
+{bloom_description}
+
+YÊU C?U B?T BU?C:
+- CH? s? d?ng thông tin trong TÀI LI?U bên du?i
+- Không suy doán, không thêm ki?n th?c bên ngoài
+- Bài t?p ph?i yêu c?u ngu?i h?c v?n d?ng dúng m?c Bloom
+- Có mô t? rõ yêu c?u d?u ra
+
+TÀI LI?U:
+{context}
+
+Ð?NH D?NG TR? V? (JSON):
+[
+  {{
+    "title": "...",
+    "task": "...",
+    "expected_output": "...",
+    "bloom_level": "{bloom_level}",
+    "difficulty": "easy | medium | hard"
+  }}
+]
+"""
+
+
+def build_question_prompt(
+    context: str,
+    bloom: BloomLevel,
+    num_items: int = 3
+) -> str:
+    return QUESTION_PROMPT_TEMPLATE.format(
+        num_items=num_items,
+        bloom_level=bloom.value,
+        bloom_description=bloom.description,
+        context=context
+    )
+
+
+def build_assignment_prompt(
+    context: str,
+    bloom: BloomLevel,
+    num_items: int = 2
+) -> str:
+    return ASSIGNMENT_PROMPT_TEMPLATE.format(
+        num_items=num_items,
+        bloom_level=bloom.value,
+        bloom_description=bloom.description,
+        context=context
+    )
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\rubric.py
+==============================
+
+import json
+from typing import List, Dict, Any
+
+from backend.pedagogy.bloom import BloomLevel
+from backend.rag.hybrid_retriever import hybrid_search
+from backend.llm.llm import get_llm
+
+
+CONTEXT_TOP_K = 5
+
+
+def retrieve_context(topic: str) -> str:
+    results = hybrid_search(topic)
+    contexts = []
+
+    for doc, _ in results[:CONTEXT_TOP_K]:
+        contexts.append(doc.page_content)
+
+    return "\n\n".join(contexts)
+
+
+RUBRIC_PROMPT_TEMPLATE = """
+B?n là GI?NG VIÊN.
+
+NHI?M V?:
+Xây d?ng RUBRIC CH?M ÐI?M cho bài h?c v?i m?c d? Bloom: {bloom_level}
+
+MÔ T? M?C Ð?:
+{bloom_description}
+
+YÊU C?U:
+- Ch? s? d?ng thông tin trong TÀI LI?U
+- Rubric ph?i dánh giá dúng m?c Bloom
+- Có nhi?u tiêu chí ch?m di?m
+- Có mô t? rõ cho t?ng m?c di?m
+
+TÀI LI?U:
+{context}
+
+Ð?NH D?NG TR? V? (JSON):
+[
+  {{
+    "criterion": "...",
+    "levels": {{
+      "excellent": "...",
+      "good": "...",
+      "average": "...",
+      "poor": "..."
+    }}
+  }}
+]
+"""
+
+
+def generate_rubric(
+    topic: str,
+    bloom: BloomLevel
+) -> List[Dict[str, Any]]:
+    """
+    Generate grading rubric based on Bloom level
+    """
+
+    context = retrieve_context(topic)
+
+    if not context.strip():
+        raise ValueError("No relevant learning material found.")
+
+    prompt = RUBRIC_PROMPT_TEMPLATE.format(
+        bloom_level=bloom.value,
+        bloom_description=bloom.description,
+        context=context
+    )
+
+    llm = get_llm()
+    raw = llm.invoke(prompt)
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("LLM output is not valid JSON.")
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\schemas.py
+==============================
+
+from pydantic import BaseModel
+from typing import List, Optional
+
+class TaskRequest(BaseModel):
+    task_type: str   # lesson_plan | assignment | exam | rubric | quiz
+    subject: str
+    clo: Optional[List[str]] = None
+    bloom_level: Optional[str] = None
+    difficulty: Optional[str] = None
+    num_items: Optional[int] = None
+    duration_minutes: Optional[int] = None
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\templates.py
+==============================
+
+LESSON_PLAN_TEMPLATE = """
+B?n là tr? gi?ng d?i h?c.
+D?a CH? trên tài li?u sau:
+{context}
+
+Hãy so?n giáo án cho môn: {subject}
+CLO: {clo}
+Th?i lu?ng: {duration} phút
+
+Yêu c?u:
+- Không thêm ki?n th?c ngoài tài li?u
+- C?u trúc rõ ràng
+- Có ho?t d?ng GV/SV
+"""
+
+==============================
+FILE: D:\ai-tro-giang\backend\pedagogy\validators.py
+==============================
+
+def validate_groundedness(answer, sources):
+    if not sources:
+        raise ValueError(
+            "N?i dung sinh ra không có can c? t? tài li?u."
+        )
+
+==============================
+FILE: D:\ai-tro-giang\backend\rag\__init__.py
+==============================
+
+
+==============================
+FILE: D:\ai-tro-giang\backend\rag\hybrid_retriever.py
+==============================
+
+from typing import List, Tuple, Dict
+from langchain.schema import Document
+
+from backend.vectorstore.faiss_store import get_faiss_store
+from backend.vectorstore.bm25_store import BM25Store
+
+
+FAISS_K = 5
+BM25_K = 5
+
+FAISS_WEIGHT = 0.6
+BM25_WEIGHT = 0.4
+
+
+def hybrid_search(query: str) -> List[Tuple[Document, float]]:
+    """
+    Hybrid retrieval: FAISS (semantic) + BM25 (keyword)
+    Returns list of (Document, hybrid_score)
+    """
+
+    faiss_store = get_faiss_store()
+    bm25_store = BM25Store.load()
+
+    faiss_results = faiss_store.similarity_search_with_score(
+        query,
+        k=FAISS_K
+    )
+
+    bm25_results = bm25_store.search(
+        query,
+        k=BM25_K
+    )
+
+    score_map: Dict[str, Dict] = {}
+
+    # --- FAISS results ---
+    for doc, score in faiss_results:
+        doc_key = f"{doc.metadata.get('doc_id')}:{doc.metadata.get('chunk_id')}"
+        semantic_score = 1 / (1 + score)  # normalize distance ? similarity
+
+        score_map[doc_key] = {
+            "doc": doc,
+            "semantic": semantic_score,
+            "keyword": 0.0
+        }
+
+    # --- BM25 results ---
+    for doc, score in bm25_results:
+        doc_key = f"{doc.metadata.get('doc_id')}:{doc.metadata.get('chunk_id')}"
+
+        if doc_key not in score_map:
+            score_map[doc_key] = {
+                "doc": doc,
+                "semantic": 0.0,
+                "keyword": score
+            }
+        else:
+            score_map[doc_key]["keyword"] = score
+
+    # --- Combine scores ---
+    results: List[Tuple[Document, float]] = []
+
+    for entry in score_map.values():
+        hybrid_score = (
+            FAISS_WEIGHT * entry["semantic"]
+            + BM25_WEIGHT * entry["keyword"]
+        )
+        results.append((entry["doc"], hybrid_score))
+
+    # Sort by hybrid score desc
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    return results
+
+==============================
+FILE: D:\ai-tro-giang\backend\rag\ingest.py
+==============================
+
+from backend.utils.chunking import chunk_text
+from backend.vectorstore.faiss_store import get_faiss_store
+from backend.vectorstore.bm25_store import BM25Store
+
+
+def ingest_document(
+    raw_text: str,
+    source_file: str,
+    page: int = None,
+    section: str = None
+):
+    """
+    Ingest document into FAISS + BM25 (Hybrid ready)
+    """
+
+    documents = chunk_text(
+        text=raw_text,
+        source_file=source_file,
+        page=page,
+        section=section
+    )
+
+    # === FAISS (semantic search) ===
+    faiss_store = get_faiss_store()
+    faiss_store.add_documents(documents)
+    faiss_store.save_local("data/faiss_index")
+
+    # === BM25 (keyword search) ===
+    bm25_store = BM25Store.load()
+    bm25_store.add_documents(documents)
+    bm25_store.save()
+
+    return {
+        "status": "success",
+        "chunks": len(documents),
+        "source_file": source_file
+    }
+
+==============================
+FILE: D:\ai-tro-giang\backend\rag\retriever.py
+==============================
+
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+import os
+
+BASE_INDEX_DIR = "data/faiss_index"
+
+def get_retriever(course_id: str):
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+    index_path = os.path.join(BASE_INDEX_DIR, course_id)
+
+    if not os.path.exists(index_path):
+        raise ValueError("Course chua có d? li?u")
+
+    db = FAISS.load_local(index_path, embeddings)
+    return db.as_retriever()
+
+==============================
+FILE: D:\ai-tro-giang\backend\utils\chunking.py
+==============================
+
+# backend/utils/chunking.py
+
+import uuid
+from typing import List
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+
+
+def chunk_text(
+    text: str,
+    source_file: str,
+    page: int = None,
+    section: str = None,
+    chunk_size: int = 400,
+    chunk_overlap: int = 80
+) -> List[Document]:
+    """
+    Chunk text into Documents with full metadata
+    """
+
+    doc_id = str(uuid.uuid4())
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", ".", " ", ""]
+    )
+
+    chunks = splitter.split_text(text)
+
+    documents = []
+
+    for idx, chunk in enumerate(chunks):
+        metadata = {
+            "doc_id": doc_id,
+            "source_file": source_file,
+            "page": page,
+            "section": section,
+            "chunk_id": idx
+        }
+
+        documents.append(
+            Document(
+                page_content=chunk,
+                metadata=metadata
+            )
+        )
+
+    return documents
+
+==============================
+FILE: D:\ai-tro-giang\backend\utils\citation.py
+==============================
+
+def format_apa(source: dict) -> str:
+    """
+    APA 7th basic format
+    """
+    author = "Unknown"
+    year = "n.d."
+    title = source.get("source_file", "Unknown document")
+    page = source.get("page")
+
+    page_part = f" (p. {page})" if page is not None else ""
+
+    return f"{author} ({year}). {title}{page_part}."
+
+
+def format_ieee(source: dict, index: int) -> str:
+    """
+    IEEE basic format
+    """
+    title = source.get("source_file", "Unknown document")
+    page = source.get("page")
+
+    page_part = f", p. {page}" if page is not None else ""
+
+    return f"[{index}] {title}{page_part}."
+
+==============================
+FILE: D:\ai-tro-giang\backend\vectorstore\bm25_store.py
+==============================
+
+import pickle
+from pathlib import Path
+from typing import List, Tuple
+
+from rank_bm25 import BM25Okapi
+from langchain.schema import Document
+
+
+BM25_PATH = Path("data/bm25.pkl")
+
+
+class BM25Store:
+    def __init__(self):
+        self.documents: List[Document] = []
+        self.corpus = []
+        self.bm25 = None
+
+    def add_documents(self, docs: List[Document]):
+        for doc in docs:
+            tokens = doc.page_content.lower().split()
+            self.documents.append(doc)
+            self.corpus.append(tokens)
+
+        self.bm25 = BM25Okapi(self.corpus)
+
+    def search(self, query: str, k: int = 5) -> List[Tuple[Document, float]]:
+        if not self.bm25:
+            return []
+
+        query_tokens = query.lower().split()
+        scores = self.bm25.get_scores(query_tokens)
+
+        ranked = sorted(
+            enumerate(scores),
+            key=lambda x: x[1],
+            reverse=True
+        )[:k]
+
+        return [
+            (self.documents[idx], score)
+            for idx, score in ranked
+            if score > 0
+        ]
+
+    def save(self):
+        BM25_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(BM25_PATH, "wb") as f:
+            pickle.dump(self, f)
+
+    @staticmethod
+    def load():
+        if not BM25_PATH.exists():
+            return BM25Store()
+
+        with open(BM25_PATH, "rb") as f:
+            return pickle.load(f)
+
+==============================
+FILE: D:\ai-tro-giang\docker-compose.yml
+==============================
+
+version: "3.9"
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+
+==============================
+FILE: D:\ai-tro-giang\Dockerfile
+==============================
+
+FROM python:3.10
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend backend
+COPY data data
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+==============================
+FILE: D:\ai-tro-giang\frontend\src\api.js
+==============================
+
+import axios from "axios";
+
+export const api = axios.create({
+  baseURL: "http://127.0.0.1:8000"
+});
+
+export function setToken(token) {
+  api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+}
+
+==============================
+FILE: D:\ai-tro-giang\frontend\src\App.jsx
+==============================
+
+import { useState } from "react";
+import { api, setToken } from "./api";
+import ChatBox from "./components/ChatBox";
+
+export default function App() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState(null);
+  const [file, setFile] = useState(null);
+
+  async function login() {
+    const res = await api.post("/auth/login", {
+      username,
+      password,
+    });
+
+    setToken(res.data.access_token);
+    setRole(res.data.role);
+
+    alert("Login thành công v?i role: " + res.data.role);
+  }
+
+  async function upload() {
+    const form = new FormData();
+    form.append("file", file);
+
+    await api.post("/upload/", form);
+    alert("Upload & ingest xong");
+  }
+
+  return (
+    <div style={{ padding: 30, fontFamily: "Arial" }}>
+      <h2>AI Tr? Gi?ng</h2>
+
+      {/* LOGIN */}
+      <h3>Login</h3>
+      <input
+        placeholder="username"
+        onChange={(e) => setUsername(e.target.value)}
+      />
+      <br />
+      <input
+        type="password"
+        placeholder="password"
+        onChange={(e) => setPassword(e.target.value)}
+      />
+      <br />
+      <button onClick={login}>Login</button>
+
+      {/* UPLOAD – TEACHER ONLY */}
+      {role === "teacher" && (
+        <>
+          <h3>Upload tài li?u (GV)</h3>
+          <input
+            type="file"
+            onChange={(e) => setFile(e.target.files[0])}
+          />
+          <br />
+          <button onClick={upload}>Upload</button>
+        </>
+      )}
+
+      <hr />
+
+      {/* CHAT – DÙNG CHATBOX PHASE 3 */}
+      <ChatBox />
+    </div>
+  );
+}
+
+==============================
+FILE: D:\ai-tro-giang\frontend\src\components\ChatBox.jsx
+==============================
+
+import { useState } from "react";
+
+export default function ChatBox() {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [sources, setSources] = useState([]);
+  const [citations, setCitations] = useState(null);
+
+  const ask = async () => {
+    const res = await fetch("http://localhost:8000/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+
+    const data = await res.json();
+    setAnswer(data.answer);
+    setSources(data.sources || []);
+    setCitations(data.citations || null);
+  };
+
+  return (
+    <div style={{ maxWidth: 800, margin: "40px auto" }}>
+      <h2>AI Tr? Gi?ng</h2>
+
+      <textarea
+        value={question}
+        onChange={(e) => setQuestion(e.target.value)}
+        rows={3}
+        style={{ width: "100%" }}
+      />
+
+      <button onClick={ask} style={{ marginTop: 10 }}>
+        H?i
+      </button>
+
+      {answer && (
+        <>
+          <h3>Tr? l?i (có g?n ngu?n)</h3>
+          <pre style={{ whiteSpace: "pre-wrap" }}>{answer}</pre>
+        </>
+      )}
+
+      {sources.length > 0 && (
+        <>
+          <h4>Ngu?n tham kh?o theo Chunk</h4>
+          <ul>
+            {sources.map((s, idx) => (
+              <li key={idx}>
+                <b>[CHUNK_{idx}]</b> — {s.source_file}
+                {s.page !== null && ` – Trang ${s.page}`}
+                {s.section && ` – ${s.section}`}
+                <details>
+                  <summary>Xem trích do?n</summary>
+                  <small>{s.preview}</small>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {citations && (
+        <>
+          <h4>References (APA)</h4>
+          <ul>
+            {citations.apa.map((c, i) => (
+              <li key={i}>{c}</li>
+            ))}
+          </ul>
+
+          <h4>References (IEEE)</h4>
+          <ul>
+            {citations.ieee.map((c, i) => (
+              <li key={i}>{c}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+==============================
+FILE: D:\ai-tro-giang\frontend\src\main.jsx
+==============================
+
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+==============================
+FILE: D:\ai-tro-giang\README.md
+==============================
+
+# AI Tr? Gi?ng (RAG-based Tutor Assistant)
+
+D? án AI tr? gi?ng s? d?ng ki?n trúc **RAG (Retrieval-Augmented Generation)**:
+- Ingest tài li?u h?c t?p (TXT / PDF / DOCX)
+- Luu vector b?ng FAISS
+- Tr? l?i câu h?i d?a trên tài li?u (không b?a)
+
+---
+
+## 1. C?u trúc d? án
+
+backend/
+agent/ # AI tutor logic
+rag/ # ingest + retriever
+api/ # FastAPI endpoints
+main.py
+data/
+raw_docs/ # tài li?u d?u vào (GV upload)
+faiss_index/ # vector database
+
+
+---
+
+## 2. Cài d?t môi tru?ng
+
+```bash
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+==============================
+FILE: D:\ai-tro-giang\requirements.txt
+==============================
+
+fastapi
+uvicorn
+python-jose
+passlib[bcrypt]
+python-multipart
+
+langchain-core
+langchain-community
+langchain-text-splitters
+faiss-cpu
+sentence-transformers
+transformers
+torch
+pypdf
+python-docx

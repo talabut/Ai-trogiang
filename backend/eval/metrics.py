@@ -1,25 +1,23 @@
-def groundedness_score(source_documents, expected_sources):
-    if not source_documents:
+def groundedness_score(sources, expected_sources):
+    if not sources:
         return 0.0
 
     matched = 0
-    for doc in source_documents:
-        src = doc.metadata.get("source", "")
-        if any(exp in src for exp in expected_sources):
+    for src in sources:
+        source_file = src.get("source_file", "")
+        if any(exp in source_file for exp in expected_sources):
             matched += 1
 
     return matched / len(expected_sources)
 
 
-def citation_coverage(source_documents):
-    if not source_documents:
+def citation_coverage(sources):
+    if not sources:
         return 0.0
-    cited_pages = [
-        doc.metadata.get("page") for doc in source_documents
-        if doc.metadata.get("page") is not None
-    ]
-    return len(cited_pages) / len(source_documents)
+
+    cited = [s for s in sources if s.get("page") is not None]
+    return len(cited) / len(sources)
 
 
-def hallucination_flag(source_documents):
-    return len(source_documents) == 0
+def hallucination_flag(sources):
+    return len(sources) == 0

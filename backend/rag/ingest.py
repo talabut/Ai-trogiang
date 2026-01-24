@@ -1,7 +1,7 @@
-# backend/agent/ingest.py
-
 from backend.utils.chunking import chunk_text
 from backend.vectorstore.faiss_store import get_faiss_store
+from backend.vectorstore.bm25_store import BM25Store
+
 
 def ingest_document(
     raw_text: str,
@@ -10,7 +10,7 @@ def ingest_document(
     section: str = None
 ):
     """
-    Ingest document into FAISS with proper chunking + metadata
+    Ingest document into FAISS + BM25 (Hybrid ready)
     """
 
     documents = chunk_text(
@@ -20,11 +20,15 @@ def ingest_document(
         section=section
     )
 
-    vectorstore = get_faiss_store()
+    # === FAISS (semantic search) ===
+    faiss_store = get_faiss_store()
+    faiss_store.add_documents(documents)
+    faiss_store.save_local("data/faiss_index")
 
-    vectorstore.add_documents(documents)
-
-    vectorstore.save_local("data/faiss_index")
+    # === BM25 (keyword search) ===
+    bm25_store = BM25Store.load()
+    bm25_store.add_documents(documents)
+    bm25_store.save()
 
     return {
         "status": "success",
