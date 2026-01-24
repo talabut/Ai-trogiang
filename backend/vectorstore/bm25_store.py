@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import List, Tuple
 
 from rank_bm25 import BM25Okapi
-from langchain.schema import Document
+from langchain_core.documents import Document
+
 
 
 BM25_PATH = Path("data/bm25.pkl")

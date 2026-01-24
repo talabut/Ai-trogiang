@@ -1,5 +1,5 @@
 from typing import List, Tuple, Dict
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from backend.vectorstore.faiss_store import get_faiss_store
 from backend.vectorstore.bm25_store import BM25Store

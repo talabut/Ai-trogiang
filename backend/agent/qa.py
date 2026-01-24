@@ -1,5 +1,5 @@
 from typing import Dict, Any, List
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from backend.rag.hybrid_retriever import hybrid_search
 from backend.llm.llm import get_llm
