@@ -1,20 +1,33 @@
-from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.document_loaders import PyPDFLoader
-import os
+# backend/agent/ingest.py
 
-BASE_INDEX_DIR = "data/faiss_index"
+from backend.utils.chunking import chunk_text
+from backend.vectorstore.faiss_store import get_faiss_store
 
-def ingest_document(file_path: str, course_id: str):
-    loader = PyPDFLoader(file_path)
-    docs = loader.load()
+def ingest_document(
+    raw_text: str,
+    source_file: str,
+    page: int = None,
+    section: str = None
+):
+    """
+    Ingest document into FAISS with proper chunking + metadata
+    """
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    documents = chunk_text(
+        text=raw_text,
+        source_file=source_file,
+        page=page,
+        section=section
     )
 
-    course_dir = os.path.join(BASE_INDEX_DIR, course_id)
-    os.makedirs(course_dir, exist_ok=True)
+    vectorstore = get_faiss_store()
 
-    db = FAISS.from_documents(docs, embeddings)
-    db.save_local(course_dir)
+    vectorstore.add_documents(documents)
+
+    vectorstore.save_local("data/faiss_index")
+
+    return {
+        "status": "success",
+        "chunks": len(documents),
+        "source_file": source_file
+    }

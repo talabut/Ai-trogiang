@@ -1,0 +1,63 @@
+# ==============================
+# EXPORT PROJECT TO TEXT FILE
+# ==============================
+
+$OutputFile = "project_export.txt"
+Remove-Item $OutputFile -ErrorAction SilentlyContinue
+
+# Danh sách thư mục cần loại bỏ
+$ExcludeDirs = @(
+    "node_modules",
+    "venv",
+    "__pycache__",
+    ".git",
+    "faiss_index",
+    "raw_docs"
+)
+
+# Danh sách extension cần lấy
+$IncludeExtensions = @(
+    ".py",
+    ".js",
+    ".jsx",
+    ".json",
+    ".yml",
+    ".yaml",
+    ".md",
+    ".txt",
+    "Dockerfile"
+)
+
+Write-Host "Exporting project to $OutputFile ..."
+
+Get-ChildItem -Recurse -File | Where-Object {
+
+    # Loại thư mục không cần
+    foreach ($dir in $ExcludeDirs) {
+        if ($_.FullName -match "\\$dir\\") {
+            return $false
+        }
+    }
+
+    # Loại file lock, env, log
+    if ($_.Extension -in @(".lock", ".log", ".env")) {
+        return $false
+    }
+
+    # Lấy đúng extension
+    return ($IncludeExtensions -contains $_.Extension) -or ($_.Name -eq "Dockerfile")
+
+} | ForEach-Object {
+
+    Add-Content $OutputFile "`n=============================="
+    Add-Content $OutputFile "FILE: $($_.FullName)"
+    Add-Content $OutputFile "==============================`n"
+
+    try {
+        Get-Content $_.FullName -Encoding UTF8 | Add-Content $OutputFile
+    } catch {
+        Add-Content $OutputFile "[ERROR: Cannot read file]"
+    }
+}
+
+Write-Host "Done. Output file: $OutputFile"

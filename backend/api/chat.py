@@ -1,17 +1,13 @@
-from fastapi import APIRouter, Depends
-from backend.agent.tutor_agent import get_tutor_agent
-from backend.auth.deps import get_current_user
+# backend/api/chat.py
 
-router = APIRouter(prefix="/chat", tags=["Chat"])
+from fastapi import APIRouter
+from backend.agent.qa import answer_question
 
-@router.post("/")
-def chat(course_id: str, query: str, user=Depends(get_current_user)):
-    agent = get_tutor_agent(course_id)
-    result = agent(query)
+router = APIRouter()
 
-    return {
-        "answer": result["result"],
-        "sources": [
-            d.metadata for d in result["source_documents"]
-        ]
-    }
+@router.post("/chat")
+def chat(query: str):
+    """
+    Chat endpoint with threshold + refusal
+    """
+    return answer_question(query)
