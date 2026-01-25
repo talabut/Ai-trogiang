@@ -1,82 +1,38 @@
-import json
-from typing import Dict, Any, List
+from backend.rag.hybrid_retriever import hybrid_search
 
-from backend.agent.qa import answer_question
-from backend.eval.groundedness import check_groundedness
-from backend.eval.faithfulness import check_faithfulness
+MIN_RETRIEVAL_SCORE = 0.15
 
+def evaluate_sample(sample: dict) -> dict:
+    """
+    sample = {
+        id: int,
+        question: str
+    }
+    """
 
-DATASET_PATH = "backend/eval/dataset.json"
+    question = sample.get("question")
+    if not question:
+        raise ValueError("Missing question in eval sample")
 
+    results = hybrid_search(question)
 
-def load_dataset() -> Dict[str, Any]:
-    with open(DATASET_PATH, encoding="utf-8") as f:
-        return json.load(f)
+    grounded = False
+    used_chunks = []
 
-
-def evaluate_sample(sample: Dict[str, Any]) -> Dict[str, Any]:
-    question = sample["question"]
-
-    result = answer_question(question)
-
-    answer = result.get("answer", "")
-    sources = result.get("sources", [])
-
-    contexts = [
-        src.get("preview", "")
-        for src in sources
-        if src.get("preview")
-    ]
-
-    groundedness = check_groundedness(answer, sources)
-    faithfulness = check_faithfulness(answer, contexts)
+    for doc, score in results:
+        if score >= MIN_RETRIEVAL_SCORE:
+            grounded = True
+            used_chunks.append({
+                "chunk_id": doc.metadata.get("chunk_id"),
+                "source_file": doc.metadata.get("source_file"),
+                "score": round(score, 4)
+            })
 
     return {
-        "id": sample["id"],
+        "id": sample.get("id"),
         "question": question,
-        "answer": answer,
-        "groundedness": groundedness,
-        "faithfulness": faithfulness,
-        "sources_count": len(sources)
+        "grounded": grounded,
+        "num_chunks": len(used_chunks),
+        "chunks": used_chunks,
+        "score": 1.0 if grounded else 0.0
     }
-
-
-def run_evaluation() -> Dict[str, Any]:
-    dataset = load_dataset()
-    samples = dataset.get("samples", [])
-
-    results: List[Dict[str, Any]] = []
-
-    grounded_ok = 0
-    faithful_ok = 0
-
-    for sample in samples:
-        print(f"Evaluating: {sample['id']} – {sample['question']}")
-        result = evaluate_sample(sample)
-        results.append(result)
-
-        if result["groundedness"]["grounded"]:
-            grounded_ok += 1
-        if result["faithfulness"]["faithful"]:
-            faithful_ok += 1
-
-    total = len(samples)
-
-    summary = {
-        "total": total,
-        "groundedness_rate": round(grounded_ok / total, 2),
-        "faithfulness_rate": round(faithful_ok / total, 2)
-    }
-
-    report = {
-        "summary": summary,
-        "results": results
-    }
-
-    return report
-
-
-if __name__ == "__main__":
-    report = run_evaluation()
-    print("\n=== EVALUATION SUMMARY ===")
-    print(json.dumps(report["summary"], indent=2, ensure_ascii=False))

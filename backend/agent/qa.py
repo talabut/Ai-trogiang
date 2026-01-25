@@ -1,9 +1,10 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from langchain_core.documents import Document
 
 from backend.rag.hybrid_retriever import hybrid_search
 from backend.llm.llm import get_llm
 from backend.utils.citation import format_apa, format_ieee
+
 
 TOP_K = 5
 HYBRID_THRESHOLD = 0.15
@@ -17,37 +18,52 @@ WATERMARK = (
 
 def answer_question(question: str) -> Dict[str, Any]:
     """
-    Answer question using Hybrid Search (FAISS + BM25)
-    with strict threshold, citation, traceability, audit-ready
+    Answer question using Hybrid Search with strict academic guardrails.
+
+    Guardrails:
+    - No retrieval → refuse
+    - Low-score retrieval → refuse
+    - LLM is NEVER called without grounded context
     """
 
-    results = hybrid_search(question)
-
-    if not results:
+    # === BASIC INPUT CHECK ===
+    if not question or len(question.strip()) < 5:
         return {
-            "answer": "Tôi không tìm thấy thông tin phù hợp trong tài liệu đã cung cấp.",
+            "answer": "Câu hỏi không hợp lệ hoặc quá ngắn.",
             "sources": [],
             "citations": {"apa": [], "ieee": []}
         }
 
-    # --- Apply hybrid threshold ---
-    filtered: List[tuple[Document, float]] = [
+    # === RETRIEVAL ===
+    results: List[Tuple[Document, float]] = hybrid_search(question)
+
+    # === GUARD 1: NO DOCUMENT FOUND ===
+    if not results:
+        return {
+            "answer": "Tôi không tìm thấy thông tin trong tài liệu đã được cung cấp.",
+            "sources": [],
+            "citations": {"apa": [], "ieee": []}
+        }
+
+    # === APPLY THRESHOLD ===
+    filtered: List[Tuple[Document, float]] = [
         (doc, score)
         for doc, score in results[:TOP_K]
         if score >= HYBRID_THRESHOLD
     ]
 
+    # === GUARD 2: OUT-OF-SCOPE QUESTION ===
     if not filtered:
         return {
             "answer": (
-                "Tôi không đủ thông tin từ tài liệu hiện có để trả lời câu hỏi này. "
-                "Vui lòng tham khảo thêm tài liệu hoặc hỏi lại với nội dung cụ thể hơn."
+                "Câu hỏi này vượt ngoài phạm vi các tài liệu hiện có. "
+                "Tôi không đủ căn cứ học thuật để trả lời."
             ),
             "sources": [],
             "citations": {"apa": [], "ieee": []}
         }
 
-    # --- Build sources ---
+    # === BUILD CONTEXT & SOURCES ===
     sources = []
     context_parts = []
 
@@ -62,17 +78,18 @@ def answer_question(question: str) -> Dict[str, Any]:
         })
 
         context_parts.append(
-            f"[CHUNK_{idx}]\n{doc.page_content}"
+            f"[CHUNK_{doc.metadata.get('chunk_id')}]\n{doc.page_content}"
         )
 
     context = "\n\n".join(context_parts)
 
+    # === PROMPT (STRICT GROUNDED) ===
     prompt = f"""
-Bạn là AI Trợ Giảng.
+Bạn là AI Trợ Giảng học thuật.
 
 CHỈ sử dụng thông tin trong các CHUNK bên dưới.
-Mỗi ý chính PHẢI kết thúc bằng tag [CHUNK_x] tương ứng.
-Nếu không đủ thông tin từ các CHUNK, hãy từ chối trả lời.
+Mỗi ý trả lời PHẢI kết thúc bằng tag [CHUNK_x] tương ứng.
+Nếu không đủ thông tin → từ chối trả lời.
 
 TÀI LIỆU:
 {context}
@@ -83,6 +100,7 @@ CÂU HỎI:
 TRẢ LỜI:
 """
 
+    # === CALL LLM (SAFE POINT) ===
     llm = get_llm()
     answer = llm.invoke(prompt).strip() + WATERMARK
 

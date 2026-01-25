@@ -3,20 +3,17 @@ from typing import List
 
 @dataclass
 class EvalSample:
+    id: int
     question: str
-    expected_sources: List[str]  # filename hoặc keyword
-    difficulty: str              # easy / medium / hard
+    expected_answer: str | None = None
 
-
-EVAL_DATASET = [
+EVAL_DATASET: List[EvalSample] = [
     EvalSample(
-        question="Định nghĩa trí tuệ nhân tạo là gì?",
-        expected_sources=["ai_intro.pdf"],
-        difficulty="easy"
+        id=1,
+        question="FAISS là gì trong hệ thống RAG?"
     ),
     EvalSample(
-        question="Sự khác nhau giữa supervised và unsupervised learning?",
-        expected_sources=["machine_learning.pdf"],
-        difficulty="medium"
+        id=2,
+        question="BM25 dùng để làm gì?"
     ),
 ]
