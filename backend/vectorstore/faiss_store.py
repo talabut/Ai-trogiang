@@ -1,37 +1,46 @@
-from pathlib import Path
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+# backend/vectorstore/faiss_store.py
 
-_INDEX_PATH = Path("data/faiss_index")
-_faiss_store = None
+import os
+from langchain_community.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+
+_FAISS_STORE = None
+FAISS_PATH = "data/faiss_index"
+
+def get_embeddings():
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 def get_faiss_store():
-    global _faiss_store
+    global _FAISS_STORE
 
-    if _faiss_store is not None:
-        return _faiss_store
+    if _FAISS_STORE is not None:
+        return _FAISS_STORE
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    embeddings = get_embeddings()
 
-    if _INDEX_PATH.exists():
-        _faiss_store = FAISS.load_local(
-            _INDEX_PATH.as_posix(),
+    index_file = os.path.join(FAISS_PATH, "index.faiss")
+
+    if os.path.exists(index_file):
+        # ✅ Load index cũ
+        _FAISS_STORE = FAISS.load_local(
+            FAISS_PATH,
             embeddings,
             allow_dangerous_deserialization=True
         )
     else:
-        # cold start: index rỗng, KHÔNG crash
-        _faiss_store = FAISS.from_texts(
-            texts=[],
-            embedding=embeddings
+        # ✅ Tạo index mới (EMPTY, không crash)
+        _FAISS_STORE = FAISS.from_texts(
+            texts=["__init__"],
+            embedding=embeddings,
+            metadatas=[{"system": True}]
         )
 
-    return _faiss_store
+        os.makedirs(FAISS_PATH, exist_ok=True)
+        _FAISS_STORE.save_local(FAISS_PATH)
+
+    return _FAISS_STORE
 
 
 def save_faiss_store():
-    if _faiss_store is not None:
-        _INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _faiss_store.save_local(_INDEX_PATH.as_posix())
+    if _FAISS_STORE is not None:
+        _FAISS_STORE.save_local(FAISS_PATH)

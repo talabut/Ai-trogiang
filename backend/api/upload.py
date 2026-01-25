@@ -1,27 +1,41 @@
-from fastapi import APIRouter, UploadFile, Depends
-import os
+# backend/api/upload.py
 
-from backend.utils.text_extraction import extract_text
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from backend.rag.ingest import ingest_document
-from backend.auth.deps import get_current_user
 
-router = APIRouter(prefix="/upload", tags=["Upload"])
-UPLOAD_DIR = "data/raw_docs"
+router = APIRouter()
 
-@router.post(
-    "/",
-    operation_id="upload_document"
-)
-def upload(course_id: str, file: UploadFile, user=Depends(get_current_user)):
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+@router.post("/upload/")
+def upload(file: UploadFile = File(...), course_id: str = "default"):
+    if not file.filename.lower().endswith(".txt"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .txt files are supported in MVP"
+        )
 
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as f:
-        f.write(file.file.read())
+    raw = file.file.read()
 
-    raw_text = extract_text(file_path)
+    try:
+        content = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="File encoding must be UTF-8"
+        )
+
+    if not content:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty file"
+        )
+
+    texts = [content]
+    metadatas = [{
+        "course_id": course_id,
+        "filename": file.filename
+    }]
 
     return ingest_document(
-        raw_text=raw_text,
-        source_file=file.filename
+        texts=texts,
+        metadatas=metadatas
     )
