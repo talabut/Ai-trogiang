@@ -7,37 +7,31 @@ except ImportError:
 
 class GeminiLLM:
     def __init__(self, api_key: str):
-        self.client = None
-        if HAS_GENAI and api_key:
-            # Sử dụng thư viện google-genai mới nhất
-            self.client = genai.Client(api_key=api_key)
-            self.model_id = "gemini-1.5-flash"
-        
-    def generate(self, prompt: str) -> str:
+        self.client = genai.Client(api_key=api_key) if HAS_GENAI and api_key else None
+
+    def invoke(self, prompt: str) -> str:
         if not self.client:
-            return "Hệ thống đang chạy Offline hoặc thiếu API Key. (Vui lòng cấu hình lại llm.py)"
-        
+            return "AI đang Offline. Vui lòng kiểm tra API Key."
         try:
+            # Lưu ý cú pháp model.generate_content của bản SDK mới
             response = self.client.models.generate_content(
-                model=self.model_id,
+                model="gemini-1.5-flash", 
                 contents=prompt
             )
             return response.text
         except Exception as e:
-            return f"Lỗi Gemini API: {str(e)}"
+            return f"Lỗi Gemini: {str(e)}"
+
+class OfflineLLM:
+    def invoke(self, prompt: str) -> str:
+        return "AI (Offline): Tôi đã nhận được câu hỏi nhưng cần API Key để xử lý."
 
 # --- CẤU HÌNH ---
-# 1. Nếu muốn dùng thật: Dán key vào đây
-MY_API_KEY = "" 
+MY_API_KEY = "" # Dán API Key vào đây
 
-# 2. Khởi tạo instance
 if MY_API_KEY:
     llm_instance = GeminiLLM(api_key=MY_API_KEY)
 else:
-    # Nếu không có key, trả về class giả lập để không lỗi hệ thống
-    class OfflineLLM:
-        def generate(self, prompt: str):
-            return "AI Trợ Giảng (Offline): Tài liệu đã được tìm thấy nhưng cần API Key để tóm tắt câu trả lời."
     llm_instance = OfflineLLM()
 
 def get_llm():

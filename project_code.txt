@@ -1,172 +1,129 @@
 
-==============================
-FILE: D:\ai-tro-giang\.pytest_cache\README.md
-==============================
+====================
+FILE: .\bundle.py
+====================
+import os
 
-# pytest cache directory #
+def bundle_code(output_file="project_code.txt"):
+    extensions = ['.py', '.jsx', '.js', '.css', '.html']
+    with open(output_file, 'w', encoding='utf-8') as outfile:
+        for root, dirs, files in os.walk("."):
+            # Bỏ qua các thư mục rác
+            if 'venv' in root or 'node_modules' in root or '.git' in root:
+                continue
+            for file in files:
+                if any(file.endswith(ext) for ext in extensions):
+                    full_path = os.path.join(root, file)
+                    outfile.write(f"\n{'='*20}\nFILE: {full_path}\n{'='*20}\n")
+                    with open(full_path, 'r', encoding='utf-8', errors='ignore') as infile:
+                        outfile.write(infile.read())
+    print(f"Đã gom code xong vào file: {output_file}")
 
-This directory contains data from the pytest's cache plugin,
-which provides the `--lf` and `--ff` options, as well as the `cache` fixture.
+if __name__ == "__main__":
+    bundle_code()
+====================
+FILE: .\check_imports.py
+====================
+import pkgutil
+import importlib
+import traceback
 
-**Do not** commit this to version control.
+BASE_PACKAGE = "backend"
 
-See [the docs](https://docs.pytest.org/en/stable/how-to/cache.html) for more information.
+errors = []
 
-==============================
-FILE: D:\ai-tro-giang\backend\__init__.py
-==============================
+for module in pkgutil.walk_packages([BASE_PACKAGE], BASE_PACKAGE + "."):
+    name = module.name
+    try:
+        importlib.import_module(name)
+    except Exception as e:
+        errors.append((name, e))
 
+print("\n====== IMPORT ERRORS ======")
+for name, err in errors:
+    print(f"\n❌ {name}")
+    traceback.print_exception(type(err), err, err.__traceback__)
 
-==============================
-FILE: D:\ai-tro-giang\backend\agent\__init__.py
-==============================
+print(f"\nTotal errors: {len(errors)}")
 
+====================
+FILE: .\backend\main.py
+====================
+from fastapi import FastAPI
 
-==============================
-FILE: D:\ai-tro-giang\backend\agent\prompt.py
-==============================
+from backend.api.chat import router as chat_router
+from backend.api.upload import router as upload_router
+from backend.api.auth import router as auth_router
+from backend.api.pedagogy import router as pedagogy_router
+from backend.api.eval import router as eval_router
+from backend.api.courses import router as courses_router
 
+app = FastAPI(title="AI Trợ Giảng")
+
+app.include_router(auth_router)
+app.include_router(upload_router)
+app.include_router(chat_router)
+app.include_router(pedagogy_router)
+app.include_router(eval_router)
+app.include_router(courses_router)
+
+====================
+FILE: .\backend\__init__.py
+====================
+
+====================
+FILE: .\backend\agent\prompt.py
+====================
 SYSTEM_PROMPT = """
-B?n l� AI tr? gi?ng h?c thu?t.
+Bạn là AI trợ giảng học thuật.
 
-Quy t?c b?t bu?c:
-- Ch? tr? l?i d?a tr�n n?i dung t�i li?u du?c cung c?p.
-- N?u kh�ng t�m th?y th�ng tin trong t�i li?u, h�y tr? l?i: 
-  "T�i kh�ng t�m th?y th�ng tin trong t�i li?u."
-- Kh�ng du?c suy do�n ho?c b?a.
-- Tr? l?i ng?n g?n, d�ng tr?ng t�m.
+Quy tắc bắt buộc:
+- Chỉ trả lời dựa trên nội dung tài liệu được cung cấp.
+- Nếu không tìm thấy thông tin trong tài liệu, hãy trả lời: 
+  "Tôi không tìm thấy thông tin trong tài liệu."
+- Không được suy đoán hoặc bịa.
+- Trả lời ngắn gọn, đúng trọng tâm.
 """
 
-==============================
-FILE: D:\ai-tro-giang\backend\agent\qa.py
-==============================
-
-from typing import Dict, Any, List, Tuple
-from langchain_core.documents import Document
-
+====================
+FILE: .\backend\agent\qa.py
+====================
 from backend.rag.hybrid_retriever import hybrid_search
 from backend.llm.llm import get_llm
-from backend.utils.citation import format_apa, format_ieee
+from backend.agent.prompt import SYSTEM_PROMPT
 
+def answer_question(question: str, course_id: str = "ML101"):
+    # 1. Tìm tài liệu liên quan
+    docs = hybrid_search(question, course_id)
+    
+    # 2. Chuẩn bị ngữ cảnh
+    if not docs:
+        context = "Không có tài liệu nào được tìm thấy."
+    else:
+        context = "\n".join([doc.page_content for doc in docs])
 
-TOP_K = 5
-HYBRID_THRESHOLD = 0.15
-
-WATERMARK = (
-    "\n\n� AI Tr? Gi?ng\n"
-    "N?i dung n�y du?c t?o t? d?ng d?a tr�n t�i li?u h?c t?p n?i b?. "
-    "Kh�ng thay th? t�i li?u ch�nh th?c."
-)
-
-
-def answer_question(question: str) -> Dict[str, Any]:
-    """
-    Answer question using Hybrid Search with strict academic guardrails.
-
-    Guardrails:
-    - No retrieval ? refuse
-    - Low-score retrieval ? refuse
-    - LLM is NEVER called without grounded context
-    """
-
-    # === BASIC INPUT CHECK ===
-    if not question or len(question.strip()) < 5:
-        return {
-            "answer": "C�u h?i kh�ng h?p l? ho?c qu� ng?n.",
-            "sources": [],
-            "citations": {"apa": [], "ieee": []}
-        }
-
-    # === RETRIEVAL ===
-    results: List[Tuple[Document, float]] = hybrid_search(question)
-
-    # === GUARD 1: NO DOCUMENT FOUND ===
-    if not results:
-        return {
-            "answer": "T�i kh�ng t�m th?y th�ng tin trong t�i li?u d� du?c cung c?p.",
-            "sources": [],
-            "citations": {"apa": [], "ieee": []}
-        }
-
-    # === APPLY THRESHOLD ===
-    filtered: List[Tuple[Document, float]] = [
-        (doc, score)
-        for doc, score in results[:TOP_K]
-        if score >= HYBRID_THRESHOLD
-    ]
-
-    # === GUARD 2: OUT-OF-SCOPE QUESTION ===
-    if not filtered:
-        return {
-            "answer": (
-                "C�u h?i n�y vu?t ngo�i ph?m vi c�c t�i li?u hi?n c�. "
-                "T�i kh�ng d? can c? h?c thu?t d? tr? l?i."
-            ),
-            "sources": [],
-            "citations": {"apa": [], "ieee": []}
-        }
-
-    # === BUILD CONTEXT & SOURCES ===
-    sources = []
-    context_parts = []
-
-    for idx, (doc, score) in enumerate(filtered):
-        sources.append({
-            "source_file": doc.metadata.get("source_file"),
-            "page": doc.metadata.get("page"),
-            "section": doc.metadata.get("section"),
-            "chunk_id": doc.metadata.get("chunk_id"),
-            "score": round(score, 4),
-            "preview": doc.page_content[:200]
-        })
-
-        context_parts.append(
-            f"[CHUNK_{doc.metadata.get('chunk_id')}]\n{doc.page_content}"
-        )
-
-    context = "\n\n".join(context_parts)
-
-    # === PROMPT (STRICT GROUNDED) ===
-    prompt = f"""
-B?n l� AI Tr? Gi?ng h?c thu?t.
-
-CH? s? d?ng th�ng tin trong c�c CHUNK b�n du?i.
-M?i � tr? l?i PH?I k?t th�c b?ng tag [CHUNK_x] tuong ?ng.
-N?u kh�ng d? th�ng tin ? t? ch?i tr? l?i.
-
-T�I LI?U:
-{context}
-
-C�U H?I:
-{question}
-
-TR? L?I:
-"""
-
-    # === CALL LLM (SAFE POINT) ===
+    # 3. Tạo prompt
+    full_prompt = f"{SYSTEM_PROMPT}\n\nCONTEXT:\n{context}\n\nQUESTION:\n{question}"
+    
+    # 4. Gọi LLM
     llm = get_llm()
-    answer = llm.invoke(prompt).strip() + WATERMARK
-
-    citations = {
-        "apa": [format_apa(s) for s in sources],
-        "ieee": [format_ieee(s, i + 1) for i, s in enumerate(sources)]
-    }
+    answer = llm.invoke(full_prompt)
+    
+    # Đảm bảo kết quả là string
+    if hasattr(answer, 'content'): # Nếu là object của LangChain
+        answer = answer.content
 
     return {
         "answer": answer,
-        "sources": sources,
-        "citations": citations
+        "sources": [{"content": d.page_content, "metadata": d.metadata} for d in docs]
     }
+====================
+FILE: .\backend\agent\__init__.py
+====================
 
-==============================
-FILE: D:\ai-tro-giang\backend\api\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\auth.py
-==============================
-
+====================
+FILE: .\backend\api\auth.py
+====================
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -178,26 +135,31 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 def login(username: str, password: str):
     return {"status": "ok"}
 
-==============================
-FILE: D:\ai-tro-giang\backend\api\chat.py
-==============================
-
-from fastapi import APIRouter
+====================
+FILE: .\backend\api\chat.py
+====================
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from backend.agent.qa import answer_question
 
-router = APIRouter(prefix="/chat", tags=["Chat"])
+router = APIRouter()
 
-@router.post(
-    "/",
-    operation_id="chat_answer_question"
-)
-def chat(question: str):
-    return answer_question(question)
+class ChatRequest(BaseModel):
+    question: str
+    course_id: str = "ML101"
 
-==============================
-FILE: D:\ai-tro-giang\backend\api\courses.py
-==============================
-
+@router.post("/")
+async def chat(request: ChatRequest):
+    try:
+        # Quan trọng: Phải truyền request.course_id
+        result = answer_question(request.question, request.course_id)
+        return result
+    except Exception as e:
+        print(f"Lỗi Chat API: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+====================
+FILE: .\backend\api\courses.py
+====================
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/courses", tags=["Courses"])
@@ -209,10 +171,9 @@ router = APIRouter(prefix="/courses", tags=["Courses"])
 def list_courses():
     return []
 
-==============================
-FILE: D:\ai-tro-giang\backend\api\eval.py
-==============================
-
+====================
+FILE: .\backend\api\eval.py
+====================
 from fastapi import APIRouter
 from backend.eval.runner import run_evaluation
 
@@ -225,10 +186,9 @@ router = APIRouter(prefix="/eval", tags=["Eval"])
 def run_eval():
     return run_evaluation()
 
-==============================
-FILE: D:\ai-tro-giang\backend\api\pedagogy.py
-==============================
-
+====================
+FILE: .\backend\api\pedagogy.py
+====================
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/pedagogy", tags=["Pedagogy"])
@@ -240,71 +200,66 @@ router = APIRouter(prefix="/pedagogy", tags=["Pedagogy"])
 def generate():
     return {"status": "ok"}
 
-==============================
-FILE: D:\ai-tro-giang\backend\api\upload.py
-==============================
-
+====================
+FILE: .\backend\api\upload.py
+====================
 import os
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from backend.rag.ingest import ingest_document
 
 router = APIRouter()
 
-# Thu m?c luu tr? file
 UPLOAD_DIR = "data/raw_docs"
 
 @router.post("/")
 async def upload_document(course_id: str, file: UploadFile = File(...)):
-    # 1. T?o thu m?c n?u chua t?n t?i
+    # Tạo thư mục nếu chưa có
     if not os.path.exists(UPLOAD_DIR):
         os.makedirs(UPLOAD_DIR)
-
-    # 2. Ki?m tra d?nh d?ng file (ch? nh?n .txt trong b?n hi?n t?i)
-    if not file.filename.endswith('.txt'):
-        raise HTTPException(status_code=400, detail="Ch? h? tr? file .txt")
 
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     
     try:
-        # 3. Luu file v�o ? dia
+        # Ghi file vào ổ đĩa
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
 
-        # 4. Ingest v�o Vector Database
+        # Ingest dữ liệu (chuyển văn bản thành vector)
         ingest_document(file_path, course_id)
 
-        return {"message": f"�� upload v� x? l� file {file.filename} th�nh c�ng cho kh�a h?c {course_id}"}
+        return {"message": f"Upload thành công file {file.filename}"}
     except Exception as e:
+        # Trả về lỗi chi tiết để debug
         raise HTTPException(status_code=500, detail=str(e))
+====================
+FILE: .\backend\api\__init__.py
+====================
 
-==============================
-FILE: D:\ai-tro-giang\backend\auth\deps.py
-==============================
-
+====================
+FILE: .\backend\auth\deps.py
+====================
 from backend.auth.roles import UserRole
 
 def get_current_user():
-    # MVP gi? l?p, sau n�y n?i JWT
+    # MVP giả lập, sau này nối JWT
     return {
         "id": "demo_user",
         "role": UserRole.TEACHER
     }
 
-==============================
-FILE: D:\ai-tro-giang\backend\auth\roles.py
-==============================
-
+====================
+FILE: .\backend\auth\roles.py
+====================
 from enum import Enum
 
 class UserRole(str, Enum):
     STUDENT = "student"
     TEACHER = "teacher"
 
-==============================
-FILE: D:\ai-tro-giang\backend\auth\security.py
-==============================
-
+====================
+FILE: .\backend\auth\security.py
+====================
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
 
@@ -327,10 +282,9 @@ def verify_token(token: str):
     except JWTError:
         return None
 
-==============================
-FILE: D:\ai-tro-giang\backend\auth\users.py
-==============================
-
+====================
+FILE: .\backend\auth\users.py
+====================
 # backend/auth/users.py
 
 from passlib.context import CryptContext
@@ -343,7 +297,7 @@ def hash_password(password: str) -> str:
 def verify_password(plain, hashed):
     return pwd_context.verify(plain, hashed)
 
-# Hash s?n (t?o 1 l?n r?i hardcode)
+# Hash sẵn (tạo 1 lần rồi hardcode)
 USERS_DB = {
     "teacher1": {
         "username": "teacher1",
@@ -365,42 +319,34 @@ def authenticate(username: str, password: str):
         return None
     return user
 
-==============================
-FILE: D:\ai-tro-giang\backend\courses\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\courses\access.py
-==============================
-
+====================
+FILE: .\backend\courses\access.py
+====================
 def check_course_access(user, course):
     if user["role"] == "teacher":
         return course.owner_id == user["id"]
     if user["role"] == "student":
-        # MVP: cho ph�p t?t c? SV (sau n�y g?n class)
+        # MVP: cho phép tất cả SV (sau này gắn class)
         return True
     return False
 
-==============================
-FILE: D:\ai-tro-giang\backend\courses\models.py
-==============================
-
+====================
+FILE: .\backend\courses\models.py
+====================
 from dataclasses import dataclass
 
 @dataclass
 class Course:
     course_id: str
     name: str
-    owner_id: str  # gi?ng vi�n
+    owner_id: str  # giảng viên
 
-==============================
-FILE: D:\ai-tro-giang\backend\courses\service.py
-==============================
-
+====================
+FILE: .\backend\courses\service.py
+====================
 from backend.courses.models import Course
 
-# MVP: in-memory, sau n�y thay DB
+# MVP: in-memory, sau này thay DB
 COURSES = {}
 
 def create_course(course_id: str, name: str, owner_id: str):
@@ -414,15 +360,13 @@ def get_course(course_id: str):
 def list_courses_by_owner(owner_id: str):
     return [c for c in COURSES.values() if c.owner_id == owner_id]
 
-==============================
-FILE: D:\ai-tro-giang\backend\eval\__init__.py
-==============================
+====================
+FILE: .\backend\courses\__init__.py
+====================
 
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\datasets.py
-==============================
-
+====================
+FILE: .\backend\eval\datasets.py
+====================
 from dataclasses import dataclass
 from typing import List
 
@@ -435,18 +379,17 @@ class EvalSample:
 EVAL_DATASET: List[EvalSample] = [
     EvalSample(
         id=1,
-        question="FAISS l� g� trong h? th?ng RAG?"
+        question="FAISS là gì trong hệ thống RAG?"
     ),
     EvalSample(
         id=2,
-        question="BM25 d�ng d? l�m g�?"
+        question="BM25 dùng để làm gì?"
     ),
 ]
 
-==============================
-FILE: D:\ai-tro-giang\backend\eval\evaluator.py
-==============================
-
+====================
+FILE: .\backend\eval\evaluator.py
+====================
 from backend.rag.hybrid_retriever import hybrid_search
 
 MIN_RETRIEVAL_SCORE = 0.15
@@ -486,17 +429,16 @@ def evaluate_sample(sample: dict) -> dict:
         "score": 1.0 if grounded else 0.0
     }
 
-==============================
-FILE: D:\ai-tro-giang\backend\eval\faithfulness.py
-==============================
-
+====================
+FILE: .\backend\eval\faithfulness.py
+====================
 import re
 from typing import Dict, Any, List
 
 
 STOPWORDS = {
-    "l�", "v�", "c?a", "trong", "cho", "v?i", "m?t", "c�c",
-    "du?c", "khi", "n�y", "d�", "nhu", "d?"
+    "là", "và", "của", "trong", "cho", "với", "một", "các",
+    "được", "khi", "này", "đó", "như", "để"
 }
 
 
@@ -505,7 +447,7 @@ def normalize(text: str) -> List[str]:
     Normalize text into keyword tokens
     """
     text = text.lower()
-    text = re.sub(r"[^a-z0-9�-?\s]", " ", text)
+    text = re.sub(r"[^a-z0-9à-ỹ\s]", " ", text)
     tokens = text.split()
     return [t for t in tokens if t not in STOPWORDS and len(t) > 2]
 
@@ -571,10 +513,9 @@ def check_faithfulness(
         "details": "All claims sufficiently supported by context."
     }
 
-==============================
-FILE: D:\ai-tro-giang\backend\eval\groundedness.py
-==============================
-
+====================
+FILE: .\backend\eval\groundedness.py
+====================
 import re
 from typing import Dict, Any, List
 
@@ -585,7 +526,7 @@ CHUNK_PATTERN = re.compile(r"\[CHUNK_(\d+)\]")
 def extract_chunk_ids(answer: str) -> List[int]:
     """
     Extract chunk indices from answer text.
-    Example: [CHUNK_0], [CHUNK_2] ? [0, 2]
+    Example: [CHUNK_0], [CHUNK_2] → [0, 2]
     """
     return [int(x) for x in CHUNK_PATTERN.findall(answer)]
 
@@ -631,10 +572,9 @@ def check_groundedness(
         "details": f"All referenced chunks are valid: {chunk_ids_in_answer}"
     }
 
-==============================
-FILE: D:\ai-tro-giang\backend\eval\metrics.py
-==============================
-
+====================
+FILE: .\backend\eval\metrics.py
+====================
 def groundedness_score(sources, expected_sources):
     if not sources:
         return 0.0
@@ -659,10 +599,9 @@ def citation_coverage(sources):
 def hallucination_flag(sources):
     return len(sources) == 0
 
-==============================
-FILE: D:\ai-tro-giang\backend\eval\runner.py
-==============================
-
+====================
+FILE: .\backend\eval\runner.py
+====================
 from backend.eval.datasets import EVAL_DATASET
 from backend.eval.evaluator import evaluate_sample
 from backend.logging.audit import audit_log
@@ -686,10 +625,13 @@ def run_evaluation():
 
     return results
 
-==============================
-FILE: D:\ai-tro-giang\backend\guardrails\citation.py
-==============================
+====================
+FILE: .\backend\eval\__init__.py
+====================
 
+====================
+FILE: .\backend\guardrails\citation.py
+====================
 def format_citations(source_documents):
     citations = []
     for doc in source_documents:
@@ -700,10 +642,9 @@ def format_citations(source_documents):
         })
     return citations
 
-==============================
-FILE: D:\ai-tro-giang\backend\guardrails\grounding.py
-==============================
-
+====================
+FILE: .\backend\guardrails\grounding.py
+====================
 from typing import List
 
 MIN_DOCS_REQUIRED = 1
@@ -711,14 +652,13 @@ MIN_DOCS_REQUIRED = 1
 def check_grounding(source_documents: List):
     if not source_documents or len(source_documents) < MIN_DOCS_REQUIRED:
         raise ValueError(
-            "Kh�ng t�m th?y t�i li?u li�n quan. "
-            "H? th?ng kh�ng th? tr? l?i d? tr�nh sai l?ch h?c thu?t."
+            "Không tìm thấy tài liệu liên quan. "
+            "Hệ thống không thể trả lời để tránh sai lệch học thuật."
         )
 
-==============================
-FILE: D:\ai-tro-giang\backend\guardrails\rate_limit.py
-==============================
-
+====================
+FILE: .\backend\guardrails\rate_limit.py
+====================
 import time
 
 REQUEST_LIMIT = 20
@@ -733,50 +673,59 @@ def check_rate_limit(user_id: str):
     timestamps = [t for t in timestamps if now - t < WINDOW_SECONDS]
 
     if len(timestamps) >= REQUEST_LIMIT:
-        raise ValueError("B?n g?i qu� nhi?u y�u c?u. Vui l�ng th? l?i sau.")
+        raise ValueError("Bạn gửi quá nhiều yêu cầu. Vui lòng thử lại sau.")
 
     timestamps.append(now)
     _user_requests[user_id] = timestamps
 
-==============================
-FILE: D:\ai-tro-giang\backend\llm\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\llm\llm.py
-==============================
-
-import google.generativeai as genai
+====================
+FILE: .\backend\llm\llm.py
+====================
+import os
+try:
+    from google import genai
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
 
 class GeminiLLM:
     def __init__(self, api_key: str):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.client = genai.Client(api_key=api_key) if HAS_GENAI and api_key else None
 
-    def generate(self, prompt: str) -> str:
+    def invoke(self, prompt: str) -> str:
+        if not self.client:
+            return "AI đang Offline. Vui lòng kiểm tra API Key."
         try:
-            response = self.model.generate_content(prompt)
+            # Lưu ý cú pháp model.generate_content của bản SDK mới
+            response = self.client.models.generate_content(
+                model="gemini-1.5-flash", 
+                contents=prompt
+            )
             return response.text
         except Exception as e:
-            return f"L?i g?i LLM: {str(e)}"
+            return f"Lỗi Gemini: {str(e)}"
 
-# �? d�ng offline nhu cu th� gi? nguy�n class cu c?a b?n
 class OfflineLLM:
-    def generate(self, prompt: str) -> str:
-        return "��y l� c�u tr? l?i m?u t? h? th?ng Offline. (Vui l�ng c?u h�nh API Key d? d�ng th?t)."
+    def invoke(self, prompt: str) -> str:
+        return "AI (Offline): Tôi đã nhận được câu hỏi nhưng cần API Key để xử lý."
 
-# Kh?i t?o instance (Thay 'YOUR_KEY' n?u mu?n d�ng th?t)
-# llm_instance = GeminiLLM(api_key="YOUR_GEMINI_API_KEY")
-llm_instance = OfflineLLM()
+# --- CẤU HÌNH ---
+MY_API_KEY = "" # Dán API Key vào đây
+
+if MY_API_KEY:
+    llm_instance = GeminiLLM(api_key=MY_API_KEY)
+else:
+    llm_instance = OfflineLLM()
 
 def get_llm():
     return llm_instance
+====================
+FILE: .\backend\llm\__init__.py
+====================
 
-==============================
-FILE: D:\ai-tro-giang\backend\logging\audit.py
-==============================
-
+====================
+FILE: .\backend\logging\audit.py
+====================
 import json
 import uuid
 from datetime import datetime
@@ -811,44 +760,16 @@ def audit_log(
     with open(LOG_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-==============================
-FILE: D:\ai-tro-giang\backend\main.py
-==============================
-
-from fastapi import FastAPI
-
-from backend.api.chat import router as chat_router
-from backend.api.upload import router as upload_router
-from backend.api.auth import router as auth_router
-from backend.api.pedagogy import router as pedagogy_router
-from backend.api.eval import router as eval_router
-from backend.api.courses import router as courses_router
-
-app = FastAPI(title="AI Tr? Gi?ng")
-
-app.include_router(auth_router)
-app.include_router(upload_router)
-app.include_router(chat_router)
-app.include_router(pedagogy_router)
-app.include_router(eval_router)
-app.include_router(courses_router)
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\bloom.py
-==============================
-
+====================
+FILE: .\backend\pedagogy\bloom.py
+====================
 from enum import Enum
 from typing import List
 
 
 class BloomLevel(str, Enum):
     """
-    Bloom's Taxonomy � Cognitive Domain
+    Bloom's Taxonomy – Cognitive Domain
     """
 
     REMEMBER = "remember"
@@ -861,32 +782,32 @@ class BloomLevel(str, Enum):
     @property
     def description(self) -> str:
         return {
-            self.REMEMBER: "Nh? l?i th�ng tin, d?nh nghia, thu?t ng?",
-            self.UNDERSTAND: "Gi?i th�ch, m� t?, di?n gi?i � nghia",
-            self.APPLY: "�p d?ng ki?n th?c v�o b�i to�n c? th?",
-            self.ANALYZE: "Ph�n t�ch, so s�nh, ch? ra m?i quan h?",
-            self.EVALUATE: "��nh gi�, nh?n x�t, ph?n bi?n",
-            self.CREATE: "T?ng h?p, thi?t k?, x�y d?ng m?i"
+            self.REMEMBER: "Nhớ lại thông tin, định nghĩa, thuật ngữ",
+            self.UNDERSTAND: "Giải thích, mô tả, diễn giải ý nghĩa",
+            self.APPLY: "Áp dụng kiến thức vào bài toán cụ thể",
+            self.ANALYZE: "Phân tích, so sánh, chỉ ra mối quan hệ",
+            self.EVALUATE: "Đánh giá, nhận xét, phản biện",
+            self.CREATE: "Tổng hợp, thiết kế, xây dựng mới"
         }[self]
 
     @property
     def action_verbs(self) -> List[str]:
         """
-        G?i � d?ng t? d�ng trong c�u h?i / b�i t?p
+        Gợi ý động từ dùng trong câu hỏi / bài tập
         """
         return {
-            self.REMEMBER: ["li?t k�", "n�u", "d?nh nghia", "k? t�n"],
-            self.UNDERSTAND: ["gi?i th�ch", "tr�nh b�y", "m� t?", "t�m t?t"],
-            self.APPLY: ["�p d?ng", "t�nh to�n", "gi?i", "th?c hi?n"],
-            self.ANALYZE: ["ph�n t�ch", "so s�nh", "ph�n lo?i", "l�m r�"],
-            self.EVALUATE: ["d�nh gi�", "nh?n x�t", "ph?n bi?n", "so s�nh uu nhu?c di?m"],
-            self.CREATE: ["thi?t k?", "x�y d?ng", "d? xu?t", "ph�t tri?n"]
+            self.REMEMBER: ["liệt kê", "nêu", "định nghĩa", "kể tên"],
+            self.UNDERSTAND: ["giải thích", "trình bày", "mô tả", "tóm tắt"],
+            self.APPLY: ["áp dụng", "tính toán", "giải", "thực hiện"],
+            self.ANALYZE: ["phân tích", "so sánh", "phân loại", "làm rõ"],
+            self.EVALUATE: ["đánh giá", "nhận xét", "phản biện", "so sánh ưu nhược điểm"],
+            self.CREATE: ["thiết kế", "xây dựng", "đề xuất", "phát triển"]
         }[self]
 
     @classmethod
     def ordered_levels(cls) -> List["BloomLevel"]:
         """
-        Tr? v? Bloom levels theo th? t? tang d?n d? kh�
+        Trả về Bloom levels theo thứ tự tăng dần độ khó
         """
         return [
             cls.REMEMBER,
@@ -897,10 +818,9 @@ class BloomLevel(str, Enum):
             cls.CREATE
         ]
 
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\generator.py
-==============================
-
+====================
+FILE: .\backend\pedagogy\generator.py
+====================
 import json
 from typing import Dict, Any, List
 
@@ -990,33 +910,32 @@ def generate_assignments(
 
     return _invoke_llm(prompt)
 
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\prompts.py
-==============================
-
+====================
+FILE: .\backend\pedagogy\prompts.py
+====================
 from backend.pedagogy.bloom import BloomLevel
 
 
 QUESTION_PROMPT_TEMPLATE = """
-B?n l� AI Tr? Gi?ng.
+Bạn là AI Trợ Giảng.
 
-NHI?M V?:
-Sinh {num_items} C�U H?I h?c t?p theo m?c d? Bloom: {bloom_level}
+NHIỆM VỤ:
+Sinh {num_items} CÂU HỎI học tập theo mức độ Bloom: {bloom_level}
 
-M� T? M?C �?:
+MÔ TẢ MỨC ĐỘ:
 {bloom_description}
 
-Y�U C?U B?T BU?C:
-- CH? s? d?ng th�ng tin trong T�I LI?U b�n du?i
-- Kh�ng suy do�n, kh�ng th�m ki?n th?c b�n ngo�i
-- M?i c�u h?i ph?i b�m s�t n?i dung t�i li?u
-- M?c d? nh?n th?c ph?i d�ng Bloom level
-- Kh�ng tr�ng l?p c�u h?i
+YÊU CẦU BẮT BUỘC:
+- CHỈ sử dụng thông tin trong TÀI LIỆU bên dưới
+- Không suy đoán, không thêm kiến thức bên ngoài
+- Mỗi câu hỏi phải bám sát nội dung tài liệu
+- Mức độ nhận thức phải đúng Bloom level
+- Không trùng lặp câu hỏi
 
-T�I LI?U:
+TÀI LIỆU:
 {context}
 
-�?NH D?NG TR? V? (JSON):
+ĐỊNH DẠNG TRẢ VỀ (JSON):
 [
   {{
     "question": "...",
@@ -1029,24 +948,24 @@ T�I LI?U:
 
 
 ASSIGNMENT_PROMPT_TEMPLATE = """
-B?n l� AI Tr? Gi?ng.
+Bạn là AI Trợ Giảng.
 
-NHI?M V?:
-Sinh {num_items} B�I T?P h?c t?p theo m?c d? Bloom: {bloom_level}
+NHIỆM VỤ:
+Sinh {num_items} BÀI TẬP học tập theo mức độ Bloom: {bloom_level}
 
-M� T? M?C �?:
+MÔ TẢ MỨC ĐỘ:
 {bloom_description}
 
-Y�U C?U B?T BU?C:
-- CH? s? d?ng th�ng tin trong T�I LI?U b�n du?i
-- Kh�ng suy do�n, kh�ng th�m ki?n th?c b�n ngo�i
-- B�i t?p ph?i y�u c?u ngu?i h?c v?n d?ng d�ng m?c Bloom
-- C� m� t? r� y�u c?u d?u ra
+YÊU CẦU BẮT BUỘC:
+- CHỈ sử dụng thông tin trong TÀI LIỆU bên dưới
+- Không suy đoán, không thêm kiến thức bên ngoài
+- Bài tập phải yêu cầu người học vận dụng đúng mức Bloom
+- Có mô tả rõ yêu cầu đầu ra
 
-T�I LI?U:
+TÀI LIỆU:
 {context}
 
-�?NH D?NG TR? V? (JSON):
+ĐỊNH DẠNG TRẢ VỀ (JSON):
 [
   {{
     "title": "...",
@@ -1084,10 +1003,9 @@ def build_assignment_prompt(
         context=context
     )
 
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\rubric.py
-==============================
-
+====================
+FILE: .\backend\pedagogy\rubric.py
+====================
 import json
 from typing import List, Dict, Any
 
@@ -1110,24 +1028,24 @@ def retrieve_context(topic: str) -> str:
 
 
 RUBRIC_PROMPT_TEMPLATE = """
-B?n l� GI?NG VI�N.
+Bạn là GIẢNG VIÊN.
 
-NHI?M V?:
-X�y d?ng RUBRIC CH?M �I?M cho b�i h?c v?i m?c d? Bloom: {bloom_level}
+NHIỆM VỤ:
+Xây dựng RUBRIC CHẤM ĐIỂM cho bài học với mức độ Bloom: {bloom_level}
 
-M� T? M?C �?:
+MÔ TẢ MỨC ĐỘ:
 {bloom_description}
 
-Y�U C?U:
-- Ch? s? d?ng th�ng tin trong T�I LI?U
-- Rubric ph?i d�nh gi� d�ng m?c Bloom
-- C� nhi?u ti�u ch� ch?m di?m
-- C� m� t? r� cho t?ng m?c di?m
+YÊU CẦU:
+- Chỉ sử dụng thông tin trong TÀI LIỆU
+- Rubric phải đánh giá đúng mức Bloom
+- Có nhiều tiêu chí chấm điểm
+- Có mô tả rõ cho từng mức điểm
 
-T�I LI?U:
+TÀI LIỆU:
 {context}
 
-�?NH D?NG TR? V? (JSON):
+ĐỊNH DẠNG TRẢ VỀ (JSON):
 [
   {{
     "criterion": "...",
@@ -1169,10 +1087,9 @@ def generate_rubric(
     except json.JSONDecodeError:
         raise ValueError("LLM output is not valid JSON.")
 
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\schemas.py
-==============================
-
+====================
+FILE: .\backend\pedagogy\schemas.py
+====================
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -1185,182 +1102,100 @@ class TaskRequest(BaseModel):
     num_items: Optional[int] = None
     duration_minutes: Optional[int] = None
 
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\templates.py
-==============================
-
+====================
+FILE: .\backend\pedagogy\templates.py
+====================
 LESSON_PLAN_TEMPLATE = """
-B?n l� tr? gi?ng d?i h?c.
-D?a CH? tr�n t�i li?u sau:
+Bạn là trợ giảng đại học.
+Dựa CHỈ trên tài liệu sau:
 {context}
 
-H�y so?n gi�o �n cho m�n: {subject}
+Hãy soạn giáo án cho môn: {subject}
 CLO: {clo}
-Th?i lu?ng: {duration} ph�t
+Thời lượng: {duration} phút
 
-Y�u c?u:
-- Kh�ng th�m ki?n th?c ngo�i t�i li?u
-- C?u tr�c r� r�ng
-- C� ho?t d?ng GV/SV
+Yêu cầu:
+- Không thêm kiến thức ngoài tài liệu
+- Cấu trúc rõ ràng
+- Có hoạt động GV/SV
 """
 
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\validators.py
-==============================
-
+====================
+FILE: .\backend\pedagogy\validators.py
+====================
 def validate_groundedness(answer, sources):
     if not sources:
         raise ValueError(
-            "N?i dung sinh ra kh�ng c� can c? t? t�i li?u."
+            "Nội dung sinh ra không có căn cứ từ tài liệu."
         )
 
-==============================
-FILE: D:\ai-tro-giang\backend\rag\__init__.py
-==============================
+====================
+FILE: .\backend\pedagogy\__init__.py
+====================
 
+====================
+FILE: .\backend\rag\hybrid_retriever.py
+====================
+import os
+from backend.vectorstore.faiss_store import EMBEDDING_MODEL
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 
-==============================
-FILE: D:\ai-tro-giang\backend\rag\hybrid_retriever.py
-==============================
-
-from typing import List, Tuple, Dict
-from langchain_core.documents import Document
-
-from backend.vectorstore.faiss_store import get_faiss_store
-from backend.vectorstore.bm25_store import BM25Store
-
-
-FAISS_K = 5
-BM25_K = 5
-
-FAISS_WEIGHT = 0.6
-BM25_WEIGHT = 0.4
-
-MIN_QUERY_LENGTH = 5
-
-
-def hybrid_search(query: str) -> List[Tuple[Document, float]]:
-    """
-    Hybrid retrieval: FAISS (semantic) + BM25 (keyword)
-
-    Defensive rules:
-    - Reject empty / too-short query
-    - Safe when FAISS/BM25 are empty (cold-start)
-    - Never throw exception
-    """
-
-    # === INPUT VALIDATION ===
-    if not query or not isinstance(query, str):
+def hybrid_search(query: str, course_id: str = "ML101"):
+    index_path = os.path.join("data", "faiss_index", course_id)
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    
+    # Kiểm tra file index tồn tại
+    faiss_file = os.path.join(index_path, "index.faiss")
+    if not os.path.exists(faiss_file):
+        print(f"--- Warning: Không tìm thấy index tại {faiss_file} ---")
         return []
 
-    query = query.strip()
-    if len(query) < MIN_QUERY_LENGTH:
-        return []
-
-    # === LOAD STORES (COLD-START SAFE) ===
     try:
-        faiss_store = get_faiss_store()
-    except Exception:
-        faiss_store = None
-
-    try:
-        bm25_store = BM25Store.load()
-    except Exception:
-        bm25_store = None
-
-    score_map: Dict[str, Dict] = {}
-
-    # === FAISS SEARCH ===
-    if faiss_store is not None:
-        try:
-            faiss_results = faiss_store.similarity_search_with_score(
-                query,
-                k=FAISS_K
-            )
-        except Exception:
-            faiss_results = []
-
-        for doc, score in faiss_results:
-            doc_key = f"{doc.metadata.get('doc_id')}:{doc.metadata.get('chunk_id')}"
-            semantic_score = 1 / (1 + score)  # distance ? similarity
-
-            score_map[doc_key] = {
-                "doc": doc,
-                "semantic": semantic_score,
-                "keyword": 0.0
-            }
-
-    # === BM25 SEARCH ===
-    if bm25_store is not None:
-        try:
-            bm25_results = bm25_store.search(query, k=BM25_K)
-        except Exception:
-            bm25_results = []
-
-        for doc, score in bm25_results:
-            doc_key = f"{doc.metadata.get('doc_id')}:{doc.metadata.get('chunk_id')}"
-
-            if doc_key not in score_map:
-                score_map[doc_key] = {
-                    "doc": doc,
-                    "semantic": 0.0,
-                    "keyword": score
-                }
-            else:
-                score_map[doc_key]["keyword"] = score
-
-    # === COMBINE SCORES ===
-    results: List[Tuple[Document, float]] = []
-
-    for entry in score_map.values():
-        hybrid_score = (
-            FAISS_WEIGHT * entry["semantic"]
-            + BM25_WEIGHT * entry["keyword"]
+        vector_store = FAISS.load_local(
+            index_path, 
+            embeddings, 
+            allow_dangerous_deserialization=True
         )
-
-        if hybrid_score > 0:
-            results.append((entry["doc"], hybrid_score))
-
-    results.sort(key=lambda x: x[1], reverse=True)
-
-    return results
-
-==============================
-FILE: D:\ai-tro-giang\backend\rag\ingest.py
-==============================
-
+        return vector_store.similarity_search(query, k=3)
+    except Exception as e:
+        print(f"--- Lỗi FAISS Search: {e} ---")
+        return []
+====================
+FILE: .\backend\rag\ingest.py
+====================
 import os
 from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import CharacterTextSplitter
-from backend.vectorstore.faiss_store import get_faiss_store
+from langchain_text_splitters import CharacterTextSplitter
+from backend.vectorstore.faiss_store import EMBEDDING_MODEL
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 
 def ingest_document(file_path: str, course_id: str):
-    # 1. Load document
+    # 1. Load file
     loader = TextLoader(file_path, encoding='utf-8')
     documents = loader.load()
 
-    # 2. Chia nh? van b?n
+    # 2. Chia nhỏ văn bản
     text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     docs = text_splitter.split_documents(documents)
 
-    # 3. G�n course_id v�o metadata d? sau n�y filter
-    for d in docs:
-        d.metadata["course_id"] = course_id
-
-    # 4. Luu v�o FAISS
-    vector_store = get_faiss_store()
-    vector_store.add_documents(docs)
+    # 3. Chuyển thành Vector và lưu
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    vector_store = FAISS.from_documents(docs, embeddings)
     
-    # 5. Luu xu?ng ? dia
     index_path = f"data/faiss_index/{course_id}"
     if not os.path.exists("data/faiss_index"):
         os.makedirs("data/faiss_index")
+        
     vector_store.save_local(index_path)
+====================
+FILE: .\backend\rag\__init__.py
+====================
 
-==============================
-FILE: D:\ai-tro-giang\backend\utils\chunking.py
-==============================
-
+====================
+FILE: .\backend\utils\chunking.py
+====================
 # backend/utils/chunking.py
 
 import uuid
@@ -1412,10 +1247,9 @@ def chunk_text(
 
     return documents
 
-==============================
-FILE: D:\ai-tro-giang\backend\utils\citation.py
-==============================
-
+====================
+FILE: .\backend\utils\citation.py
+====================
 def format_apa(source: dict) -> str:
     """
     APA 7th basic format
@@ -1441,10 +1275,9 @@ def format_ieee(source: dict, index: int) -> str:
 
     return f"[{index}] {title}{page_part}."
 
-==============================
-FILE: D:\ai-tro-giang\backend\utils\text_extraction.py
-==============================
-
+====================
+FILE: .\backend\utils\text_extraction.py
+====================
 from pathlib import Path
 from pypdf import PdfReader
 from docx import Document as DocxDocument
@@ -1470,10 +1303,9 @@ def extract_text(file_path: str) -> str:
 
     raise ValueError(f"Unsupported file type: {ext}")
 
-==============================
-FILE: D:\ai-tro-giang\backend\vectorstore\bm25_store.py
-==============================
-
+====================
+FILE: .\backend\vectorstore\bm25_store.py
+====================
 import pickle
 from pathlib import Path
 from typing import List, Tuple
@@ -1532,91 +1364,51 @@ class BM25Store:
         with open(BM25_PATH, "rb") as f:
             return pickle.load(f)
 
-==============================
-FILE: D:\ai-tro-giang\backend\vectorstore\faiss_store.py
-==============================
-
-# backend/vectorstore/faiss_store.py
-
+====================
+FILE: .\backend\vectorstore\faiss_store.py
+====================
 import os
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
-_FAISS_STORE = None
-FAISS_PATH = "data/faiss_index"
-
-def get_embeddings():
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# Sử dụng model nhỏ để tiết kiệm RAM và chạy nhanh trên CPU
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 def get_faiss_store():
-    global _FAISS_STORE
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    # Khởi tạo một store trống để tránh lỗi 500 khi chưa có dữ liệu
+    return FAISS.from_texts(["Khởi tạo"], embeddings)
+====================
+FILE: .\frontend\index.html
+====================
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AI Trợ Giảng</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
 
-    if _FAISS_STORE is not None:
-        return _FAISS_STORE
+====================
+FILE: .\frontend\vite.config.js
+====================
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
-    embeddings = get_embeddings()
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173
+  }
+});
 
-    index_file = os.path.join(FAISS_PATH, "index.faiss")
-
-    if os.path.exists(index_file):
-        # ? Load index cu
-        _FAISS_STORE = FAISS.load_local(
-            FAISS_PATH,
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
-    else:
-        # ? T?o index m?i (EMPTY, kh�ng crash)
-        _FAISS_STORE = FAISS.from_texts(
-            texts=["__init__"],
-            embedding=embeddings,
-            metadatas=[{"system": True}]
-        )
-
-        os.makedirs(FAISS_PATH, exist_ok=True)
-        _FAISS_STORE.save_local(FAISS_PATH)
-
-    return _FAISS_STORE
-
-
-def save_faiss_store():
-    if _FAISS_STORE is not None:
-        _FAISS_STORE.save_local(FAISS_PATH)
-
-==============================
-FILE: D:\ai-tro-giang\docker-compose.yml
-==============================
-
-version: "3.9"
-
-services:
-  backend:
-    build: .
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/data
-
-==============================
-FILE: D:\ai-tro-giang\Dockerfile
-==============================
-
-FROM python:3.10
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY backend backend
-COPY data data
-
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-==============================
-FILE: D:\ai-tro-giang\frontend\src\api.js
-==============================
-
+====================
+FILE: .\frontend\src\api.js
+====================
 import axios from "axios";
 
 export const api = axios.create({
@@ -1627,10 +1419,9 @@ export function setToken(token) {
   api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
 }
 
-==============================
-FILE: D:\ai-tro-giang\frontend\src\App.jsx
-==============================
-
+====================
+FILE: .\frontend\src\App.jsx
+====================
 import { useState } from "react";
 import { api, setToken } from "./api";
 import ChatBox from "./components/ChatBox";
@@ -1650,7 +1441,7 @@ export default function App() {
     setToken(res.data.access_token);
     setRole(res.data.role);
 
-    alert("Login th�nh c�ng v?i role: " + res.data.role);
+    alert("Login thành công với role: " + res.data.role);
   }
 
   async function upload() {
@@ -1663,7 +1454,7 @@ export default function App() {
 
   return (
     <div style={{ padding: 30, fontFamily: "Arial" }}>
-      <h2>AI Tr? Gi?ng</h2>
+      <h2>AI Trợ Giảng</h2>
 
       {/* LOGIN */}
       <h3>Login</h3>
@@ -1680,10 +1471,10 @@ export default function App() {
       <br />
       <button onClick={login}>Login</button>
 
-      {/* UPLOAD � TEACHER ONLY */}
+      {/* UPLOAD – TEACHER ONLY */}
       {role === "teacher" && (
         <>
-          <h3>Upload t�i li?u (GV)</h3>
+          <h3>Upload tài liệu (GV)</h3>
           <input
             type="file"
             onChange={(e) => setFile(e.target.files[0])}
@@ -1695,16 +1486,24 @@ export default function App() {
 
       <hr />
 
-      {/* CHAT � D�NG CHATBOX PHASE 3 */}
+      {/* CHAT – DÙNG CHATBOX PHASE 3 */}
       <ChatBox />
     </div>
   );
 }
 
-==============================
-FILE: D:\ai-tro-giang\frontend\src\components\ChatBox.jsx
-==============================
+====================
+FILE: .\frontend\src\main.jsx
+====================
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
 
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+====================
+FILE: .\frontend\src\components\ChatBox.jsx
+====================
 import { useState } from "react";
 
 export default function ChatBox() {
@@ -1728,7 +1527,7 @@ export default function ChatBox() {
 
   return (
     <div style={{ maxWidth: 800, margin: "40px auto" }}>
-      <h2>AI Tr? Gi?ng</h2>
+      <h2>AI Trợ Giảng</h2>
 
       <textarea
         value={question}
@@ -1738,27 +1537,27 @@ export default function ChatBox() {
       />
 
       <button onClick={ask} style={{ marginTop: 10 }}>
-        H?i
+        Hỏi
       </button>
 
       {answer && (
         <>
-          <h3>Tr? l?i (c� g?n ngu?n)</h3>
+          <h3>Trả lời (có gắn nguồn)</h3>
           <pre style={{ whiteSpace: "pre-wrap" }}>{answer}</pre>
         </>
       )}
 
       {sources.length > 0 && (
         <>
-          <h4>Ngu?n tham kh?o theo Chunk</h4>
+          <h4>Nguồn tham khảo theo Chunk</h4>
           <ul>
             {sources.map((s, idx) => (
               <li key={idx}>
-                <b>[CHUNK_{idx}]</b> � {s.source_file}
-                {s.page !== null && ` � Trang ${s.page}`}
-                {s.section && ` � ${s.section}`}
+                <b>[CHUNK_{idx}]</b> — {s.source_file}
+                {s.page !== null && ` – Trang ${s.page}`}
+                {s.section && ` – ${s.section}`}
                 <details>
-                  <summary>Xem tr�ch do?n</summary>
+                  <summary>Xem trích đoạn</summary>
                   <small>{s.preview}</small>
                 </details>
               </li>
@@ -1788,10 +1587,9 @@ export default function ChatBox() {
   );
 }
 
-==============================
-FILE: D:\ai-tro-giang\frontend\src\components\FileUpload.jsx
-==============================
-
+====================
+FILE: .\frontend\src\components\FileUpload.jsx
+====================
 import React, { useState } from "react";
 import axios from "axios";
 
@@ -1806,13 +1604,13 @@ function FileUpload() {
 
   const handleUpload = async () => {
     if (!selectedFile) {
-      alert("Vui l�ng ch?n m?t file!");
+      alert("Vui lòng chọn một file!");
       return;
     }
 
     setLoading(true);
     const formData = new FormData();
-    // Quan tr?ng: T�n 'file' ph?i kh?p v?i backend
+    // Quan trọng: Tên 'file' phải khớp với backend
     formData.append("file", selectedFile);
 
     try {
@@ -1823,10 +1621,10 @@ function FileUpload() {
           headers: { "Content-Type": "multipart/form-data" },
         }
       );
-      alert("Upload th�nh c�ng: " + response.data.message);
+      alert("Upload thành công: " + response.data.message);
     } catch (error) {
-      console.error("L?i upload:", error);
-      alert("L?i upload: " + (error.response?.data?.detail || "Kh�ng r� l?i"));
+      console.error("Lỗi upload:", error);
+      alert("Lỗi upload: " + (error.response?.data?.detail || "Không rõ lỗi"));
     } finally {
       setLoading(false);
     }
@@ -1834,7 +1632,7 @@ function FileUpload() {
 
   return (
     <div style={{ padding: "20px", border: "1px solid #ccc", marginBottom: "20px" }}>
-      <h3>Upload T�i Li?u (GV)</h3>
+      <h3>Upload Tài Liệu (GV)</h3>
       <input
         type="text"
         placeholder="Course ID (vd: ML101)"
@@ -1844,74 +1642,67 @@ function FileUpload() {
       <br /><br />
       <input type="file" onChange={handleFileChange} accept=".txt" />
       <button onClick={handleUpload} disabled={loading}>
-        {loading ? "�ang x? l�..." : "T?i l�n & Ingest"}
+        {loading ? "Đang xử lý..." : "Tải lên & Ingest"}
       </button>
     </div>
   );
 }
 
 export default FileUpload;
+====================
+FILE: .\tests\conftest.py
+====================
+import sys
+from pathlib import Path
 
-==============================
-FILE: D:\ai-tro-giang\frontend\src\main.jsx
-==============================
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
+====================
+FILE: .\tests\test_eval.py
+====================
+from backend.eval.runner import run_evaluation
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+def test_eval_pipeline_runs():
+    results = run_evaluation()
+    assert isinstance(results, list)
+    assert len(results) > 0
+    assert "score" in results[0]
 
-==============================
-FILE: D:\ai-tro-giang\README.md
-==============================
+====================
+FILE: .\tests\test_eval_pipeline.py
+====================
+from backend.eval.runner import run_evaluation
 
-# AI Tr? Gi?ng (RAG-based Tutor Assistant)
+def test_eval_runs():
+    results = run_evaluation()
+    assert isinstance(results, list)
+    assert "grounded" in results[0]
 
-D? �n AI tr? gi?ng s? d?ng ki?n tr�c **RAG (Retrieval-Augmented Generation)**:
-- Ingest t�i li?u h?c t?p (TXT / PDF / DOCX)
-- Luu vector b?ng FAISS
-- Tr? l?i c�u h?i d?a tr�n t�i li?u (kh�ng b?a)
+====================
+FILE: .\tests\test_guardrails.py
+====================
+from backend.rag.hybrid_retriever import hybrid_search
+from backend.agent.qa import answer_question
 
----
+def test_empty_query():
+    assert hybrid_search("") == []
 
-## 1. C?u tr�c d? �n
+def test_short_query():
+    assert hybrid_search("hi") == []
 
-backend/
-agent/ # AI tutor logic
-rag/ # ingest + retriever
-api/ # FastAPI endpoints
-main.py
-data/
-raw_docs/ # t�i li?u d?u v�o (GV upload)
-faiss_index/ # vector database
+def test_out_of_scope_question():
+    result = answer_question("Thủ đô của Pháp là gì?")
+    assert "không tìm thấy" in result["answer"].lower() \
+        or "vượt ngoài phạm vi" in result["answer"].lower()
 
+====================
+FILE: .\tests\test_rag_guardrail.py
+====================
+from backend.agent.qa import answer_question
 
----
-
-## 2. C�i d?t m�i tru?ng
-
-```bash
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-==============================
-FILE: D:\ai-tro-giang\requirements.txt
-==============================
-
-fastapi
-uvicorn
-python-jose
-passlib[bcrypt]
-python-multipart
-
-langchain-core
-langchain-community
-langchain-text-splitters
-faiss-cpu
-sentence-transformers
-transformers
-torch
-pypdf
-python-docx
+def test_out_of_scope():
+    r = answer_question("Ai là tổng thống Mỹ?")
+    assert "không tìm thấy" in r["answer"].lower() \
+        or "vượt ngoài phạm vi" in r["answer"].lower()
