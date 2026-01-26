@@ -2,7 +2,7 @@
 
 import os
 from langchain_community.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 _FAISS_STORE = None
 FAISS_PATH = "data/faiss_index"

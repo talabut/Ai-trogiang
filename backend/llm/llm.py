@@ -1,18 +1,25 @@
+import google.generativeai as genai
+
+class GeminiLLM:
+    def __init__(self, api_key: str):
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
+
+    def generate(self, prompt: str) -> str:
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            return f"Lỗi gọi LLM: {str(e)}"
+
+# Để dùng offline như cũ thì giữ nguyên class cũ của bạn
 class OfflineLLM:
-    """
-    Offline, deterministic LLM stub.
-    Only echoes grounded content.
-    """
+    def generate(self, prompt: str) -> str:
+        return "Đây là câu trả lời mẫu từ hệ thống Offline. (Vui lòng cấu hình API Key để dùng thật)."
 
-    def invoke(self, prompt: str) -> str:
-        # Trả về phần context làm "tóm tắt"
-        if "TÀI LIỆU:" in prompt:
-            return (
-                "Dựa trên các tài liệu được cung cấp, nội dung liên quan đã được "
-                "tổng hợp và trình bày theo đúng phạm vi tài liệu."
-            )
-        return "Không đủ thông tin để trả lời."
-
+# Khởi tạo instance (Thay 'YOUR_KEY' nếu muốn dùng thật)
+# llm_instance = GeminiLLM(api_key="YOUR_GEMINI_API_KEY")
+llm_instance = OfflineLLM()
 
 def get_llm():
-    return OfflineLLM()
+    return llm_instance

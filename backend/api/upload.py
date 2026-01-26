@@ -1,41 +1,33 @@
-# backend/api/upload.py
-
+import os
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from backend.rag.ingest import ingest_document
 
 router = APIRouter()
 
-@router.post("/upload/")
-def upload(file: UploadFile = File(...), course_id: str = "default"):
-    if not file.filename.lower().endswith(".txt"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only .txt files are supported in MVP"
-        )
+# Thư mục lưu trữ file
+UPLOAD_DIR = "data/raw_docs"
 
-    raw = file.file.read()
+@router.post("/")
+async def upload_document(course_id: str, file: UploadFile = File(...)):
+    # 1. Tạo thư mục nếu chưa tồn tại
+    if not os.path.exists(UPLOAD_DIR):
+        os.makedirs(UPLOAD_DIR)
 
+    # 2. Kiểm tra định dạng file (chỉ nhận .txt trong bản hiện tại)
+    if not file.filename.endswith('.txt'):
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file .txt")
+
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    
     try:
-        content = raw.decode("utf-8").strip()
-    except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="File encoding must be UTF-8"
-        )
+        # 3. Lưu file vào ổ đĩa
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
 
-    if not content:
-        raise HTTPException(
-            status_code=400,
-            detail="Empty file"
-        )
+        # 4. Ingest vào Vector Database
+        ingest_document(file_path, course_id)
 
-    texts = [content]
-    metadatas = [{
-        "course_id": course_id,
-        "filename": file.filename
-    }]
-
-    return ingest_document(
-        texts=texts,
-        metadatas=metadatas
-    )
+        return {"message": f"Đã upload và xử lý file {file.filename} thành công cho khóa học {course_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
