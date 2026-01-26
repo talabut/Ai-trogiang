@@ -244,47 +244,39 @@ def generate():
 FILE: D:\ai-tro-giang\backend\api\upload.py
 ==============================
 
-# backend/api/upload.py
-
+import os
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from backend.rag.ingest import ingest_document
 
 router = APIRouter()
 
-@router.post("/upload/")
-def upload(file: UploadFile = File(...), course_id: str = "default"):
-    if not file.filename.lower().endswith(".txt"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only .txt files are supported in MVP"
-        )
+# Thu m?c luu tr? file
+UPLOAD_DIR = "data/raw_docs"
 
-    raw = file.file.read()
+@router.post("/")
+async def upload_document(course_id: str, file: UploadFile = File(...)):
+    # 1. T?o thu m?c n?u chua t?n t?i
+    if not os.path.exists(UPLOAD_DIR):
+        os.makedirs(UPLOAD_DIR)
 
+    # 2. Ki?m tra d?nh d?ng file (ch? nh?n .txt trong b?n hi?n t?i)
+    if not file.filename.endswith('.txt'):
+        raise HTTPException(status_code=400, detail="Ch? h? tr? file .txt")
+
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    
     try:
-        content = raw.decode("utf-8").strip()
-    except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="File encoding must be UTF-8"
-        )
+        # 3. Luu file vào ? dia
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
 
-    if not content:
-        raise HTTPException(
-            status_code=400,
-            detail="Empty file"
-        )
+        # 4. Ingest vào Vector Database
+        ingest_document(file_path, course_id)
 
-    texts = [content]
-    metadatas = [{
-        "course_id": course_id,
-        "filename": file.filename
-    }]
-
-    return ingest_document(
-        texts=texts,
-        metadatas=metadatas
-    )
+        return {"message": f"Ðã upload và x? lý file {file.filename} thành công cho khóa h?c {course_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 ==============================
 FILE: D:\ai-tro-giang\backend\auth\deps.py
@@ -755,24 +747,31 @@ FILE: D:\ai-tro-giang\backend\llm\__init__.py
 FILE: D:\ai-tro-giang\backend\llm\llm.py
 ==============================
 
+import google.generativeai as genai
+
+class GeminiLLM:
+    def __init__(self, api_key: str):
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
+
+    def generate(self, prompt: str) -> str:
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            return f"L?i g?i LLM: {str(e)}"
+
+# Ð? dùng offline nhu cu thì gi? nguyên class cu c?a b?n
 class OfflineLLM:
-    """
-    Offline, deterministic LLM stub.
-    Only echoes grounded content.
-    """
+    def generate(self, prompt: str) -> str:
+        return "Ðây là câu tr? l?i m?u t? h? th?ng Offline. (Vui lòng c?u hình API Key d? dùng th?t)."
 
-    def invoke(self, prompt: str) -> str:
-        # Tr? v? ph?n context làm "tóm t?t"
-        if "TÀI LI?U:" in prompt:
-            return (
-                "D?a trên các tài li?u du?c cung c?p, n?i dung liên quan dã du?c "
-                "t?ng h?p và trình bày theo dúng ph?m vi tài li?u."
-            )
-        return "Không d? thông tin d? tr? l?i."
-
+# Kh?i t?o instance (Thay 'YOUR_KEY' n?u mu?n dùng th?t)
+# llm_instance = GeminiLLM(api_key="YOUR_GEMINI_API_KEY")
+llm_instance = OfflineLLM()
 
 def get_llm():
-    return OfflineLLM()
+    return llm_instance
 
 ==============================
 FILE: D:\ai-tro-giang\backend\logging\audit.py
@@ -1330,32 +1329,33 @@ def hybrid_search(query: str) -> List[Tuple[Document, float]]:
 FILE: D:\ai-tro-giang\backend\rag\ingest.py
 ==============================
 
-# backend/rag/ingest.py
-
-from typing import List
+import os
+from langchain_community.document_loaders import TextLoader
+from langchain.text_splitter import CharacterTextSplitter
 from backend.vectorstore.faiss_store import get_faiss_store
 
-def ingest_document(
-    texts: List[str],
-    metadatas: List[dict]
-):
-    if not texts:
-        raise ValueError("No extracted text to ingest")
+def ingest_document(file_path: str, course_id: str):
+    # 1. Load document
+    loader = TextLoader(file_path, encoding='utf-8')
+    documents = loader.load()
 
-    if len(texts) != len(metadatas):
-        raise ValueError("texts and metadatas length mismatch")
+    # 2. Chia nh? van b?n
+    text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    docs = text_splitter.split_documents(documents)
 
-    faiss_store = get_faiss_store()
+    # 3. Gán course_id vào metadata d? sau này filter
+    for d in docs:
+        d.metadata["course_id"] = course_id
 
-    faiss_store.add_texts(
-        texts=texts,
-        metadatas=metadatas
-    )
-
-    return {
-        "status": "success",
-        "chunks": len(texts)
-    }
+    # 4. Luu vào FAISS
+    vector_store = get_faiss_store()
+    vector_store.add_documents(docs)
+    
+    # 5. Luu xu?ng ? dia
+    index_path = f"data/faiss_index/{course_id}"
+    if not os.path.exists("data/faiss_index"):
+        os.makedirs("data/faiss_index")
+    vector_store.save_local(index_path)
 
 ==============================
 FILE: D:\ai-tro-giang\backend\utils\chunking.py
@@ -1540,7 +1540,7 @@ FILE: D:\ai-tro-giang\backend\vectorstore\faiss_store.py
 
 import os
 from langchain_community.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 _FAISS_STORE = None
 FAISS_PATH = "data/faiss_index"
@@ -1787,6 +1787,70 @@ export default function ChatBox() {
     </div>
   );
 }
+
+==============================
+FILE: D:\ai-tro-giang\frontend\src\components\FileUpload.jsx
+==============================
+
+import React, { useState } from "react";
+import axios from "axios";
+
+function FileUpload() {
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [courseId, setCourseId] = useState("ML101");
+  const [loading, setLoading] = useState(false);
+
+  const handleFileChange = (e) => {
+    setSelectedFile(e.target.files[0]);
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      alert("Vui lòng ch?n m?t file!");
+      return;
+    }
+
+    setLoading(true);
+    const formData = new FormData();
+    // Quan tr?ng: Tên 'file' ph?i kh?p v?i backend
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await axios.post(
+        `http://localhost:8000/upload/?course_id=${courseId}`,
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+      alert("Upload thành công: " + response.data.message);
+    } catch (error) {
+      console.error("L?i upload:", error);
+      alert("L?i upload: " + (error.response?.data?.detail || "Không rõ l?i"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: "20px", border: "1px solid #ccc", marginBottom: "20px" }}>
+      <h3>Upload Tài Li?u (GV)</h3>
+      <input
+        type="text"
+        placeholder="Course ID (vd: ML101)"
+        value={courseId}
+        onChange={(e) => setCourseId(e.target.value)}
+      />
+      <br /><br />
+      <input type="file" onChange={handleFileChange} accept=".txt" />
+      <button onClick={handleUpload} disabled={loading}>
+        {loading ? "Ðang x? lý..." : "T?i lên & Ingest"}
+      </button>
+    </div>
+  );
+}
+
+export default FileUpload;
 
 ==============================
 FILE: D:\ai-tro-giang\frontend\src\main.jsx
