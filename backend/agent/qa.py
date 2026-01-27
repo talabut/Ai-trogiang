@@ -1,29 +1,45 @@
 from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import get_llm
-from backend.agent.prompt import SYSTEM_PROMPT
+from backend.llm.llm import llm_instance
 
-def answer_question(question: str, course_id: str = "ML101"):
-    # 1. Tìm tài liệu liên quan
-    docs = hybrid_search(question, course_id)
+def answer_question(query: str, course_id: str):
+    """
+    Nhận câu hỏi, tìm kiếm tài liệu liên quan và trả lời.
+    """
+    # 1. Tìm kiếm ngữ cảnh từ nhiều nguồn (Hybrid)
+    docs = hybrid_search(query, course_id)
     
-    # 2. Tạo ngữ cảnh (Context)
-    context = "\n".join([doc.page_content for doc in docs]) if docs else "Không tìm thấy tài liệu liên quan trong hệ thống."
+    if not docs:
+        return {
+            "answer": "Xin lỗi, tôi không tìm thấy thông tin liên quan trong tài liệu của môn học này.",
+            "sources": []
+        }
 
-    # 3. Tạo Prompt đầy đủ
-    full_prompt = f"{SYSTEM_PROMPT}\n\nCONTEXT:\n{context}\n\nQUESTION:\n{question}"
+    context = "\n\n".join([doc.page_content for doc in docs])
     
-    # 4. Gọi LLM xử lý
-    llm = get_llm()
-    response = llm.invoke(full_prompt)
+    # 2. Xây dựng Prompt chặt chẽ (Guardrails)
+    prompt = f"""
+    Bạn là một trợ lý giảng dạy thông minh. Hãy trả lời câu hỏi dựa TRỰC TIẾP vào ngữ cảnh dưới đây.
+    Nếu ngữ cảnh không có thông tin, hãy nói rằng bạn không biết, đừng tự bịa ra câu trả lời.
 
-    # 5. ĐẢM BẢO KẾT QUẢ LÀ STRING (Sửa lỗi này để chạy test)
-    if isinstance(response, str):
-        answer = response
-    else:
-        # Nếu là object từ Gemini SDK mới, lấy .text
-        answer = getattr(response, 'text', str(response))
+    NGỮ CẢNH:
+    {context}
+
+    CÂU HỎI: {query}
+    
+    TRẢ LỜI:
+    """
+
+    # 3. Gọi LLM và xử lý kết quả
+    response_text = llm_instance.invoke(prompt)
+    
+    # Lấy danh sách nguồn (metadata) để hiển thị cho người dùng
+    sources = []
+    for doc in docs:
+        source_info = doc.metadata.get("source", "Tài liệu không tên")
+        if source_info not in sources:
+            sources.append(source_info)
 
     return {
-        "answer": answer,
-        "sources": [{"content": d.page_content, "metadata": d.metadata} for d in docs]
+        "answer": response_text.strip(),
+        "sources": sources
     }

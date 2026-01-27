@@ -1,38 +1,32 @@
 import os
-try:
-    from google import genai
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
+import google.generativeai as genai
+from typing import Optional
+
+# Khuyến khích sử dụng biến môi trường để bảo mật
+# Bạn có thể set bằng lệnh: export GEMINI_API_KEY="your_key"
+API_KEY = os.getenv("GEMINI_API_KEY") or "YOUR_DEFAULT_API_KEY_IF_NEEDED"
 
 class GeminiLLM:
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key) if HAS_GENAI and api_key else None
+    def __init__(self, model_name: str = "gemini-1.5-flash"):
+        if not API_KEY or API_KEY == "YOUR_DEFAULT_API_KEY_IF_NEEDED":
+            print("CẢNH BÁO: Chưa tìm thấy GEMINI_API_KEY. Hệ thống có thể không hoạt động.")
+        
+        genai.configure(api_key=API_KEY)
+        self.model = genai.GenerativeModel(model_name)
 
     def invoke(self, prompt: str) -> str:
-        if not self.client:
-            return "Hệ thống đang chạy Offline. Vui lòng cấu hình API Key."
+        """
+        Gửi prompt đến Gemini và trả về văn bản thuần túy.
+        """
         try:
-            # Cú pháp chuẩn của google-genai SDK 2026
-            response = self.client.models.generate_content(
-                model="gemini-1.5-flash", 
-                contents=prompt
-            )
-            return response.text
+            response = self.model.generate_content(prompt)
+            # Kiểm tra xem response có nội dung không trước khi truy cập .text
+            if response and response.text:
+                return response.text
+            return ""
         except Exception as e:
-            return f"Lỗi Gemini API: {str(e)}"
+            print(f"Lỗi khi gọi Gemini API: {e}")
+            return f"Lỗi: Không thể kết nối với LLM. {str(e)}"
 
-class OfflineLLM:
-    def invoke(self, prompt: str) -> str:
-        return "AI (Chế độ Offline): Tôi đã nhận được câu hỏi nhưng cần API Key để xử lý thông tin."
-
-# --- CẤU HÌNH API KEY ---
-MY_API_KEY = "" # Dán Key của bạn vào đây
-
-if MY_API_KEY:
-    llm_instance = GeminiLLM(api_key=MY_API_KEY)
-else:
-    llm_instance = OfflineLLM()
-
-def get_llm():
-    return llm_instance
+# Singleton instance để dùng chung trong toàn bộ app
+llm_instance = GeminiLLM()

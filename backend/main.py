@@ -1,17 +1,32 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from backend.api import courses, auth
 
-from backend.api.chat import router as chat_router
-from backend.api.upload import router as upload_router
-from backend.api.auth import router as auth_router
-from backend.api.pedagogy import router as pedagogy_router
-from backend.api.eval import router as eval_router
-from backend.api.courses import router as courses_router
+app = FastAPI(title="AI Pedagogy Assistant API")
 
-app = FastAPI(title="AI Trợ Giảng")
+# FIX: Cấu hình CORS
+# Cho phép Frontend (Vite/React) truy cập vào API
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000", # Nếu bạn dùng Next.js hoặc port khác
+]
 
-app.include_router(auth_router)
-app.include_router(upload_router)
-app.include_router(chat_router)
-app.include_router(pedagogy_router)
-app.include_router(eval_router)
-app.include_router(courses_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # Cho phép tất cả các phương thức GET, POST, PUT, DELETE...
+    allow_headers=["*"], # Cho phép tất cả các headers
+)
+
+# Đăng ký các router
+app.include_router(auth.router)
+app.include_router(courses.router)
+
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "Hệ thống hỗ trợ giảng dạy AI đã sẵn sàng"
+    }
