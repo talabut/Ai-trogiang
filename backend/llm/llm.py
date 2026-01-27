@@ -11,23 +11,23 @@ class GeminiLLM:
 
     def invoke(self, prompt: str) -> str:
         if not self.client:
-            return "AI đang Offline. Vui lòng kiểm tra API Key."
+            return "Hệ thống đang chạy Offline. Vui lòng cấu hình API Key."
         try:
-            # Lưu ý cú pháp model.generate_content của bản SDK mới
+            # Cú pháp chuẩn của google-genai SDK 2026
             response = self.client.models.generate_content(
                 model="gemini-1.5-flash", 
                 contents=prompt
             )
             return response.text
         except Exception as e:
-            return f"Lỗi Gemini: {str(e)}"
+            return f"Lỗi Gemini API: {str(e)}"
 
 class OfflineLLM:
     def invoke(self, prompt: str) -> str:
-        return "AI (Offline): Tôi đã nhận được câu hỏi nhưng cần API Key để xử lý."
+        return "AI (Chế độ Offline): Tôi đã nhận được câu hỏi nhưng cần API Key để xử lý thông tin."
 
-# --- CẤU HÌNH ---
-MY_API_KEY = "" # Dán API Key vào đây
+# --- CẤU HÌNH API KEY ---
+MY_API_KEY = "" # Dán Key của bạn vào đây
 
 if MY_API_KEY:
     llm_instance = GeminiLLM(api_key=MY_API_KEY)
