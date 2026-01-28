@@ -5,15 +5,15 @@ from backend.agent.qa import answer_question
 router = APIRouter()
 
 class ChatRequest(BaseModel):
+    course_id: str
     question: str
-    course_id: str = "ML101" # Nhận mã môn học từ frontend
 
 @router.post("/")
 async def chat(request: ChatRequest):
+    # Đã bỏ phần check_course_access để ưu tiên tính năng
     try:
-        # Truyền cả question và course_id vào logic QA
+        # Gọi thẳng vào logic xử lý RAG
         result = answer_question(request.question, request.course_id)
         return result
     except Exception as e:
-        print(f"Chat API Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")

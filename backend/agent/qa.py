@@ -1,45 +1,33 @@
 from backend.rag.hybrid_retriever import hybrid_search
 from backend.llm.llm import llm_instance
+from backend.agent.prompt import SYSTEM_PROMPT
 
-def answer_question(query: str, course_id: str):
-    """
-    Nhận câu hỏi, tìm kiếm tài liệu liên quan và trả lời.
-    """
-    # 1. Tìm kiếm ngữ cảnh từ nhiều nguồn (Hybrid)
-    docs = hybrid_search(query, course_id)
-    
-    if not docs:
+
+def answer_question(question: str, course_id: str) -> dict:
+    context_docs = hybrid_search(query=question, course_id=course_id)
+
+    if not context_docs:
         return {
-            "answer": "Xin lỗi, tôi không tìm thấy thông tin liên quan trong tài liệu của môn học này.",
+            "answer": "Tôi không tìm thấy thông tin liên quan trong tài liệu của khóa học này.",
             "sources": []
         }
 
-    context = "\n\n".join([doc.page_content for doc in docs])
-    
-    # 2. Xây dựng Prompt chặt chẽ (Guardrails)
-    prompt = f"""
-    Bạn là một trợ lý giảng dạy thông minh. Hãy trả lời câu hỏi dựa TRỰC TIẾP vào ngữ cảnh dưới đây.
-    Nếu ngữ cảnh không có thông tin, hãy nói rằng bạn không biết, đừng tự bịa ra câu trả lời.
+    context_text = "\n---\n".join([doc["content"] for doc in context_docs])
 
-    NGỮ CẢNH:
-    {context}
+    full_prompt = f"""{SYSTEM_PROMPT}
 
-    CÂU HỎI: {query}
-    
-    TRẢ LỜI:
-    """
+Ngữ cảnh tài liệu:
+{context_text}
 
-    # 3. Gọi LLM và xử lý kết quả
-    response_text = llm_instance.invoke(prompt)
-    
-    # Lấy danh sách nguồn (metadata) để hiển thị cho người dùng
-    sources = []
-    for doc in docs:
-        source_info = doc.metadata.get("source", "Tài liệu không tên")
-        if source_info not in sources:
-            sources.append(source_info)
+Câu hỏi người dùng: {question}
+Trả lời:"""
+
+    try:
+        response = llm_instance.invoke(full_prompt)
+    except Exception as e:
+        response = f"Lỗi khi kết nối với AI: {str(e)}"
 
     return {
-        "answer": response_text.strip(),
-        "sources": sources
+        "answer": response,
+        "sources": context_docs
     }

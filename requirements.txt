@@ -1,16 +1,17 @@
-fastapi
-uvicorn
-python-multipart
-langchain
-langchain-community
-langchain-huggingface
-langchain-text-splitters
-faiss-cpu
-sentence-transformers
-rank-bm25
-google-genai
-python-jose[cryptography]
-passlib[bcrypt]
-pypdf
-python-docx
-requests
+/*************  ✨ Windsurf Command 🌟  *************/
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+langchain==0.1.0
+langchain-google-genai==0.0.5
+langchain-community==0.0.10
+langchain-huggingface==0.0.1
+faiss-cpu==1.7.4
+rank_bm25==0.2.2
+pydantic==2.5.3
+python-dotenv==1.0.0
+sentence-transformers==2.2.2
+/*******  58c2cc60-25cb-4ee9-95aa-e526eee02690  *******/
