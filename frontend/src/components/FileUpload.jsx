@@ -1,59 +1,50 @@
-import React, { useState } from "react";
-import axios from "axios";
+import React, { useState } from 'react';
+import api from '../api/client';
 
-function FileUpload() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [courseId, setCourseId] = useState("ML101");
+const FileUpload = () => {
+  const [file, setFile] = useState(null);
+  const [courseId, setCourseId] = useState('ML101'); // Mặc định cho demo
   const [loading, setLoading] = useState(false);
-
-  const handleFileChange = (e) => {
-    setSelectedFile(e.target.files[0]);
-  };
+  const [message, setMessage] = useState('');
 
   const handleUpload = async () => {
-    if (!selectedFile) {
-      alert("Vui lòng chọn một file!");
-      return;
-    }
-
-    setLoading(true);
+    if (!file) return alert('Vui lòng chọn file!');
+    
     const formData = new FormData();
-    // Quan trọng: Tên 'file' phải khớp với backend
-    formData.append("file", selectedFile);
-
+    formData.append('file', file);
+    
+    setLoading(true);
+    setMessage('Đang xử lý tài liệu...');
     try {
-      const response = await axios.post(
-        `http://localhost:8000/upload/?course_id=${courseId}`,
-        formData,
-        {
-          headers: { "Content-Type": "multipart/form-data" },
-        }
-      );
-      alert("Upload thành công: " + response.data.message);
-    } catch (error) {
-      console.error("Lỗi upload:", error);
-      alert("Lỗi upload: " + (error.response?.data?.detail || "Không rõ lỗi"));
+      // Gọi đúng endpoint /api/upload/
+      await api.post(`/upload/?course_id=${courseId}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setMessage('✅ Tải lên và Ingest thành công!');
+    } catch (err) {
+      setMessage('❌ Lỗi: ' + (err.response?.data?.detail || err.message));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ padding: "20px", border: "1px solid #ccc", marginBottom: "20px" }}>
-      <h3>Upload Tài Liệu (GV)</h3>
-      <input
-        type="text"
-        placeholder="Course ID (vd: ML101)"
-        value={courseId}
+    <div style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '8px', marginBottom: '20px' }}>
+      <h3>1. Tải tài liệu (PDF/TXT)</h3>
+      <input 
+        type="text" 
+        placeholder="Course ID" 
+        value={courseId} 
         onChange={(e) => setCourseId(e.target.value)}
+        style={{ marginBottom: '10px', display: 'block', padding: '5px' }}
       />
-      <br /><br />
-      <input type="file" onChange={handleFileChange} accept=".txt" />
-      <button onClick={handleUpload} disabled={loading}>
-        {loading ? "Đang xử lý..." : "Tải lên & Ingest"}
+      <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+      <button onClick={handleUpload} disabled={loading} style={{ marginLeft: '10px' }}>
+        {loading ? 'Đang Ingest...' : 'Tải lên'}
       </button>
+      {message && <p style={{ fontSize: '0.9em', marginTop: '10px' }}>{message}</p>}
     </div>
   );
-}
+};
 
 export default FileUpload;

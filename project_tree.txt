@@ -1,0 +1,115 @@
+├── D:\ai-tro-giang/
+│   ├── bundle.py
+│   ├── check_imports.py
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   ├── main.py
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── project_code.txt
+│   ├── project_tree.txt
+│   ├── quick_test.py
+│   ├── README.md
+│   ├── requirements.txt
+│   ├── test.txt
+│   ├── backend/
+│   │   ├── __init__.py
+│   │   ├── agent/
+│   │   │   ├── prompt.py
+│   │   │   ├── qa.py
+│   │   │   ├── __init__.py
+│   │   ├── api/
+│   │   │   ├── auth.py
+│   │   │   ├── chat.py
+│   │   │   ├── courses.py
+│   │   │   ├── eval.py
+│   │   │   ├── pedagogy.py
+│   │   │   ├── upload.py
+│   │   │   ├── __init__.py
+│   │   ├── auth/
+│   │   │   ├── deps.py
+│   │   │   ├── roles.py
+│   │   │   ├── security.py
+│   │   │   ├── users.py
+│   │   ├── courses/
+│   │   │   ├── access.py
+│   │   │   ├── models.py
+│   │   │   ├── service.py
+│   │   │   ├── __init__.py
+│   │   ├── database/
+│   │   │   ├── db_config.py
+│   │   ├── eval/
+│   │   │   ├── dataset.json
+│   │   │   ├── datasets.py
+│   │   │   ├── evaluator.py
+│   │   │   ├── faithfulness.py
+│   │   │   ├── groundedness.py
+│   │   │   ├── metrics.py
+│   │   │   ├── runner.py
+│   │   │   ├── __init__.py
+│   │   ├── guardrails/
+│   │   │   ├── citation.py
+│   │   │   ├── grounding.py
+│   │   │   ├── rate_limit.py
+│   │   ├── llm/
+│   │   │   ├── llm.py
+│   │   │   ├── __init__.py
+│   │   ├── logging/
+│   │   │   ├── audit.py
+│   │   ├── pedagogy/
+│   │   │   ├── bloom.py
+│   │   │   ├── generator.py
+│   │   │   ├── prompts.py
+│   │   │   ├── rubric.py
+│   │   │   ├── schemas.py
+│   │   │   ├── templates.py
+│   │   │   ├── validators.py
+│   │   │   ├── __init__.py
+│   │   ├── rag/
+│   │   │   ├── hybrid_retriever.py
+│   │   │   ├── ingest.py
+│   │   │   ├── __init__.py
+│   │   ├── utils/
+│   │   │   ├── chunking.py
+│   │   │   ├── citation.py
+│   │   │   ├── text_extraction.py
+│   │   ├── vectorstore/
+│   │   │   ├── bm25_store.py
+│   │   │   ├── faiss_store.py
+│   ├── data/
+│   │   ├── app_database.db
+│   │   ├── audit.log
+│   │   ├── bm25_Ml101.pkl
+│   │   ├── bm25/
+│   │   ├── faiss_index/
+│   │   │   ├── .gitkeep
+│   │   │   ├── Ml101/
+│   │   │   │   ├── index.faiss
+│   │   │   │   ├── index.pkl
+│   │   ├── raw_docs/
+│   │   │   ├── .gitkeep
+│   │   │   ├── 694467e3464045b9803fbba62508179e.txt
+│   │   │   ├── 83dee78d344649c393659de375ce52e0.txt
+│   │   │   ├── project_export.txt
+│   │   ├── uploads/
+│   ├── frontend/
+│   │   ├── index.html
+│   │   ├── package-lock.json
+│   │   ├── package.json
+│   │   ├── vite.config.js
+│   │   ├── src/
+│   │   │   ├── App.jsx
+│   │   │   ├── main.jsx
+│   │   │   ├── api/
+│   │   │   │   ├── client.js
+│   │   │   ├── components/
+│   │   │   │   ├── ChatBox.jsx
+│   │   │   │   ├── FileUpload.jsx
+│   ├── tests/
+│   │   ├── conftest.py
+│   │   ├── test_eval.py
+│   │   ├── test_eval_pipeline.py
+│   │   ├── test_guardrails.py
+│   │   ├── test_rag_guardrail.py
+│   ├── uploads/
+│   │   ├── test_knowledge.txt

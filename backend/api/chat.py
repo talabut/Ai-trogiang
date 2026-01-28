@@ -10,10 +10,9 @@ class ChatRequest(BaseModel):
 
 @router.post("/")
 async def chat(request: ChatRequest):
-    # Đã bỏ phần check_course_access để ưu tiên tính năng
     try:
-        # Gọi thẳng vào logic xử lý RAG
+        # Gọi trực tiếp không cần current_user
         result = answer_question(request.question, request.course_id)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Lỗi xử lý chat: {str(e)}")
