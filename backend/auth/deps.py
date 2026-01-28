@@ -3,14 +3,13 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.auth.security import verify_token
 from backend.auth.roles import UserRole
 
+# Sử dụng HTTPBearer để Swagger UI hiện nút "Authorize" (Green lock)
 security = HTTPBearer()
 
 def get_current_user(auth: HTTPAuthorizationCredentials = Depends(security)):
-    """
-    Middleware xác thực: Giải mã Token để lấy thông tin người dùng.
-    Sửa lỗi: Thay thế dữ liệu mock bằng việc verify Token thật từ header.
-    """
-    payload = verify_token(auth.credentials)
+    token = auth.credentials
+    payload = verify_token(token)
+    
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -33,12 +32,9 @@ def get_current_user(auth: HTTPAuthorizationCredentials = Depends(security)):
     }
 
 def require_teacher(current_user: dict = Depends(get_current_user)):
-    """
-    Helper để bắt buộc quyền Giáo viên cho các API nhạy cảm (như upload)
-    """
     if current_user["role"] != UserRole.TEACHER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bạn không có quyền thực hiện hành động này"
+            detail="Chỉ giảng viên mới có quyền thực hiện hành động này"
         )
     return current_user
