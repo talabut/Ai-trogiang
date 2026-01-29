@@ -1039,23 +1039,33 @@ pip install -r requirements.txt
 ==============================
 FILE: .\requirements.txt
 ==============================
-/*************  ✨ Windsurf Command 🌟  *************/
-fastapi==0.109.0
-uvicorn==0.27.0
-python-multipart==0.0.6
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.1.2
-langchain==0.1.0
-langchain-google-genai==0.0.5
-langchain-community==0.0.10
-langchain-huggingface==0.0.1
-faiss-cpu==1.7.4
-rank_bm25==0.2.2
-pydantic==2.5.3
-python-dotenv==1.0.0
-sentence-transformers==2.2.2
-/*******  58c2cc60-25cb-4ee9-95aa-e526eee02690  *******/
+fastapi
+uvicorn
+python-multipart
+python-jose
+passlib[bcrypt]
+
+langchain-core
+langchain-community
+langchain-text-splitters
+faiss-cpu
+sentence-transformers
+transformers
+torch
+pypdf
+python-docx
+
+# --- OCR & PDF Processing ---
+pdf2image
+paddlepaddle>=2.6.2
+paddleocr>=2.7.0
+opencv-python-headless
+
+# ... các thư viện cũ ...
+llama-index-core
+llama-index-embeddings-huggingface
+llama-index-vector-stores-faiss
+llama-index-readers-file
 ==============================
 FILE: .\test.txt
 ==============================
@@ -1082,40 +1092,106 @@ Quy tắc bắt buộc:
 ==============================
 FILE: .\backend\agent\qa.py
 ==============================
+from typing import Dict, Any, List
+import json
 from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import llm_instance
-from backend.agent.prompt import SYSTEM_PROMPT
+from backend.llm.llm import get_llm
 
-def answer_question(question: str, course_id: str = "default_course") -> dict:
+# --- CONFIGURATION ---
+THRESHOLD = 0.05 # Strict threshold after normalization/fusion
+
+def answer_question(question: str, course_id: str) -> Dict[str, Any]:
     """
-    Logic trả lời câu hỏi RAG.
-    FIX: Thêm default course_id và handle out-of-scope.
+    Generates answer with strict citations using Hybrid RAG.
     """
-    # 1. Tìm kiếm context
-    context_docs = hybrid_search(query=question, course_id=course_id)
-
-    # 2. Guardrail: Nếu không tìm thấy tài liệu (test_out_of_scope_question)
-    if not context_docs:
+    
+    # 1. Retrieval (Hybrid)
+    results = hybrid_search(question, course_id)
+    
+    # 2. Refusal Logic (Step 6)
+    if not results or results[0]["final_score"] < THRESHOLD:
         return {
-            "answer": "Tôi không tìm thấy thông tin liên quan trong tài liệu hoặc câu hỏi nằm ngoài phạm vi hỗ trợ.",
-            "sources": []
+            "answer": "Tôi không tìm thấy thông tin phù hợp trong tài liệu đã cung cấp để trả lời câu hỏi này.",
+            "citations": []
         }
 
-    # 3. Chuẩn bị Prompt
-    context_text = "\n---\n".join([doc["content"] for doc in context_docs[:3]])
-    full_prompt = f"{SYSTEM_PROMPT}\n\nNgữ cảnh:\n{context_text}\n\nCâu hỏi: {question}\nTrả lời:"
+    # 3. Context Assembly (Step 4)
+    # Build context string with strict metadata markers
+    context_str = ""
+    valid_citations = []
+    
+    for i, item in enumerate(results):
+        meta = item["metadata"]
+        text = item["text"]
+        
+        # Safe get metadata for citation
+        doc_id = meta.get("doc_id", "Unknown")
+        file_name = meta.get("file_name", "Unknown")
+        page = meta.get("page", "N/A")
+        line_start =Hz = meta.get("line_start", "?")
+        line_end = meta.get("line_end", "?")
+        
+        # Marker for LLM reference
+        marker_id = f"REF_{i+1}"
+        
+        context_str += f"\n--- [{marker_id}] (File: {file_name}, Page: {page}, Lines: {line_start}-{line_end}) ---\n"
+        context_str += f"{text}\n"
 
-    try:
-        response = llm_instance.invoke(full_prompt)
-        return {
-            "answer": response,
-            "sources": context_docs
-        }
-    except Exception as e:
-        return {
-            "answer": f"Đã xảy ra lỗi khi xử lý: {str(e)}",
-            "sources": []
-        }
+        valid_citations.append({
+            "ref_id": marker_id,
+            "doc_id": doc_id,
+            "page": page,
+            "line_start": line_start,
+            "line_end": line_end,
+            "file_name": file_name,
+            "score": round(item["final_score"], 4)
+        })
+
+    # 4. Prompt Engineering (Step 5)
+    prompt = f"""
+Bạn là AI Trợ Giảng học thuật nghiêm túc.
+Nhiệm vụ: Trả lời câu hỏi dựa trên các đoạn văn bản (Context) được cung cấp dưới đây.
+
+QUY TẮC BẮT BUỘC:
+1. Chỉ sử dụng thông tin có trong Context. KHÔNG bịa đặt, KHÔNG dùng kiến thức ngoài.
+2. Nếu Context không đủ thông tin để trả lời câu hỏi, hãy nói "Tôi không tìm thấy thông tin trong tài liệu."
+3. Khi trích dẫn thông tin, hãy ghi chú nguồn (ví dụ: Theo tài liệu [REF_1]...).
+
+CONTEXT:
+{context_str}
+
+CÂU HỎI: 
+{question}
+
+TRẢ LỜI:
+"""
+
+    # 5. Call LLM
+    llm = get_llm()
+    # Note: The LocalMockLLM in current codebase parses regex "Ngữ cảnh tài liệu:". 
+    # Since we changed the prompt format, we might need to update llm.py OR adapt the prompt to match regex.
+    # To be safe with existing llm.py regex , let's add the specific marker it looks for:
+    
+    safe_prompt = f"Ngữ cảnh tài liệu:\n{context_str}\nCâu hỏi người dùng:\n{question}"
+    
+    raw_answer = llm.invoke(safe_prompt)
+
+    # 6. Final Output Construction
+    # We clean up the citation list to match the requirement schema
+    final_citations = []
+    for c in valid_citations:
+        final_citations.append({
+            "doc_id": c["doc_id"],
+            "page": c["page"],
+            "line_start": c["line_start"],
+            "line_end": c["line_end"],
+            "file_name": c["file_name"]
+        })
+
+    return {
+        "answer": raw_answer,
+        "citations": final_citations
+    }
 ==============================
 FILE: .\backend\agent\__init__.py
 ==============================
@@ -1145,52 +1221,17 @@ async def chat_query(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 ==============================
-FILE: .\backend\api\courses.py
-==============================
-from fastapi import APIRouter, UploadFile, File, Depends
-
-router = APIRouter()
-
-# ĐÃ VÔ HIỆU HÓA ĐỂ DÙNG CHUNG /upload/ CHO MVP
-# @router.post("/{course_id}/upload")
-# async def upload_to_course(course_id: str, file: UploadFile = File(...)):
-#     return {"message": "Deprecated. Use /upload/ instead"}
-==============================
-FILE: .\backend\api\eval.py
-==============================
-from fastapi import APIRouter
-from backend.eval.runner import run_evaluation
-
-router = APIRouter(prefix="/eval", tags=["Eval"])
-
-@router.post(
-    "/run",
-    operation_id="eval_run"
-)
-def run_eval():
-    return run_evaluation()
-
-==============================
-FILE: .\backend\api\pedagogy.py
-==============================
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/pedagogy", tags=["Pedagogy"])
-
-@router.post(
-    "/generate",
-    operation_id="pedagogy_generate"
-)
-def generate():
-    return {"status": "ok"}
-
-==============================
 FILE: .\backend\api\upload.py
 ==============================
 from fastapi import APIRouter, File, UploadFile, Query
 import shutil
 import os
-from backend.rag.ingest import ingest_document
+from pathlib import Path
+
+from backend.utils.text_extraction import extract_text
+from backend.rag.canonicalize import canonicalize_pages
+from backend.rag.chunking import chunk_canonical_pages
+from backend.rag.llama_ingest import ingest_canonical_chunks
 
 router = APIRouter()
 
@@ -1199,69 +1240,43 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/")
 async def upload_file(
-    file: UploadFile = File(...), 
-    course_id: str = Query("ML101") # Fix: Thêm Query default để không bắt buộc
+    file: UploadFile = File(...),
+    course_id: str = Query("ML101")
 ):
+    # 1. Save file
     file_path = os.path.join(UPLOAD_DIR, file.filename)
-    
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
-    # Gọi hàm xử lý RAG
-    ingest_document(file_path, course_id)
-    
+
+    # 2. Extract raw pages
+    # EXPECT: List[Dict] [{page_num, text, ...}]
+    raw_pages = extract_text(file_path)
+
+    # 3. Canonicalize pages
+    canonical_pages = canonicalize_pages(raw_pages)
+
+    # 4. Chunking
+    doc_id = Path(file.filename).stem
+    chunks = chunk_canonical_pages(canonical_pages)
+
+    # 5. Ingest into LlamaIndex
+    ingest_canonical_chunks(
+        chunks=chunks,
+        course_id=course_id,
+        file_name=file.filename,
+        doc_id=doc_id
+    )
+
     return {
-        "filename": file.filename, 
-        "course_id": course_id, 
-        "status": "ingested"
+        "filename": file.filename,
+        "course_id": course_id,
+        "doc_id": doc_id,
+        "chunks": len(chunks),
+        "status": "uploaded_and_ingested"
     }
+
 ==============================
 FILE: .\backend\api\__init__.py
-==============================
-
-==============================
-FILE: .\backend\courses\access.py
-==============================
-def check_course_access(user, course):
-    if user["role"] == "teacher":
-        return course.owner_id == user["id"]
-    if user["role"] == "student":
-        # MVP: cho phép tất cả SV (sau này gắn class)
-        return True
-    return False
-
-==============================
-FILE: .\backend\courses\models.py
-==============================
-from dataclasses import dataclass
-
-@dataclass
-class Course:
-    course_id: str
-    name: str
-    owner_id: str  # giảng viên
-
-==============================
-FILE: .\backend\courses\service.py
-==============================
-from backend.courses.models import Course
-
-# MVP: in-memory, sau này thay DB
-COURSES = {}
-
-def create_course(course_id: str, name: str, owner_id: str):
-    course = Course(course_id, name, owner_id)
-    COURSES[course_id] = course
-    return course
-
-def get_course(course_id: str):
-    return COURSES.get(course_id)
-
-def list_courses_by_owner(owner_id: str):
-    return [c for c in COURSES.values() if c.owner_id == owner_id]
-
-==============================
-FILE: .\backend\courses\__init__.py
 ==============================
 
 ==============================
@@ -1291,385 +1306,6 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
-==============================
-FILE: .\backend\eval\dataset.json
-==============================
-{
-  "version": "1.0",
-  "description": "Evaluation dataset for AI Tro Giang – Groundedness & Faithfulness",
-  "samples": [
-    {
-      "id": "Q1",
-      "question": "Học máy là gì?",
-      "expected_answer_type": "definition",
-      "expected_chunks": [
-        {
-          "doc_id": "ANY",
-          "chunk_id": "ANY"
-        }
-      ],
-      "notes": "Câu hỏi định nghĩa cơ bản, phải có trích dẫn từ tài liệu."
-    },
-    {
-      "id": "Q2",
-      "question": "Mô hình học máy được huấn luyện bằng cách nào?",
-      "expected_answer_type": "explanation",
-      "expected_chunks": [
-        {
-          "doc_id": "ANY",
-          "chunk_id": "ANY"
-        }
-      ],
-      "notes": "Yêu cầu giải thích quy trình huấn luyện dựa trên dữ liệu."
-    },
-    {
-      "id": "Q3",
-      "question": "Sự khác nhau giữa học có giám sát và không giám sát?",
-      "expected_answer_type": "comparison",
-      "expected_chunks": [
-        {
-          "doc_id": "ANY",
-          "chunk_id": "ANY"
-        }
-      ],
-      "notes": "Phải có ít nhất 2 chunk khác nhau cho so sánh."
-    },
-    {
-      "id": "Q4",
-      "question": "Thuật toán KNN hoạt động như thế nào?",
-      "expected_answer_type": "algorithm",
-      "expected_chunks": [
-        {
-          "doc_id": "ANY",
-          "chunk_id": "ANY"
-        }
-      ],
-      "notes": "Nếu tài liệu không có KNN thì hệ thống PHẢI từ chối."
-    },
-    {
-      "id": "Q5",
-      "question": "Thời tiết hôm nay ở Hà Nội như thế nào?",
-      "expected_answer_type": "out_of_scope",
-      "expected_chunks": [],
-      "notes": "Câu hỏi ngoài phạm vi – phải bị từ chối."
-    }
-  ]
-}
-
-==============================
-FILE: .\backend\eval\datasets.py
-==============================
-from dataclasses import dataclass
-from typing import List
-
-@dataclass
-class EvalSample:
-    id: int
-    question: str
-    expected_answer: str | None = None
-
-EVAL_DATASET: List[EvalSample] = [
-    EvalSample(
-        id=1,
-        question="FAISS là gì trong hệ thống RAG?"
-    ),
-    EvalSample(
-        id=2,
-        question="BM25 dùng để làm gì?"
-    ),
-]
-
-==============================
-FILE: .\backend\eval\evaluator.py
-==============================
-from backend.rag.hybrid_retriever import hybrid_search
-
-MIN_RETRIEVAL_SCORE = 0.15
-
-def evaluate_sample(sample: dict) -> dict:
-    """
-    sample = {
-        id: int,
-        question: str
-    }
-    """
-
-    question = sample.get("question")
-    if not question:
-        raise ValueError("Missing question in eval sample")
-
-    results = hybrid_search(question)
-
-    grounded = False
-    used_chunks = []
-
-    for doc, score in results:
-        if score >= MIN_RETRIEVAL_SCORE:
-            grounded = True
-            used_chunks.append({
-                "chunk_id": doc.metadata.get("chunk_id"),
-                "source_file": doc.metadata.get("source_file"),
-                "score": round(score, 4)
-            })
-
-    return {
-        "id": sample.get("id"),
-        "question": question,
-        "grounded": grounded,
-        "num_chunks": len(used_chunks),
-        "chunks": used_chunks,
-        "score": 1.0 if grounded else 0.0
-    }
-
-==============================
-FILE: .\backend\eval\faithfulness.py
-==============================
-import re
-from typing import Dict, Any, List
-
-
-STOPWORDS = {
-    "là", "và", "của", "trong", "cho", "với", "một", "các",
-    "được", "khi", "này", "đó", "như", "để"
-}
-
-
-def normalize(text: str) -> List[str]:
-    """
-    Normalize text into keyword tokens
-    """
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9à-ỹ\s]", " ", text)
-    tokens = text.split()
-    return [t for t in tokens if t not in STOPWORDS and len(t) > 2]
-
-
-def extract_claim_sentences(answer: str) -> List[str]:
-    """
-    Split answer into claim sentences (remove chunk tags)
-    """
-    clean = re.sub(r"\[CHUNK_\d+\]", "", answer)
-    sentences = re.split(r"[.\n]", clean)
-    return [s.strip() for s in sentences if len(s.strip()) > 20]
-
-
-def check_faithfulness(
-    answer: str,
-    contexts: List[str],
-    min_overlap_ratio: float = 0.3
-) -> Dict[str, Any]:
-    """
-    Faithfulness check:
-    - Each claim sentence must overlap sufficiently with context keywords
-    """
-
-    context_text = " ".join(contexts)
-    context_tokens = set(normalize(context_text))
-
-    claims = extract_claim_sentences(answer)
-
-    if not claims:
-        return {
-            "faithful": False,
-            "reason": "NO_CLAIM_SENTENCE",
-            "details": "No valid claim sentence found in answer."
-        }
-
-    unfaithful_claims = []
-
-    for claim in claims:
-        claim_tokens = normalize(claim)
-
-        if not claim_tokens:
-            continue
-
-        overlap = set(claim_tokens) & context_tokens
-        overlap_ratio = len(overlap) / len(set(claim_tokens))
-
-        if overlap_ratio < min_overlap_ratio:
-            unfaithful_claims.append({
-                "claim": claim,
-                "overlap_ratio": round(overlap_ratio, 2)
-            })
-
-    if unfaithful_claims:
-        return {
-            "faithful": False,
-            "reason": "LOW_CONTEXT_OVERLAP",
-            "details": unfaithful_claims
-        }
-
-    return {
-        "faithful": True,
-        "reason": "OK",
-        "details": "All claims sufficiently supported by context."
-    }
-
-==============================
-FILE: .\backend\eval\groundedness.py
-==============================
-import re
-from typing import Dict, Any, List
-
-
-CHUNK_PATTERN = re.compile(r"\[CHUNK_(\d+)\]")
-
-
-def extract_chunk_ids(answer: str) -> List[int]:
-    """
-    Extract chunk indices from answer text.
-    Example: [CHUNK_0], [CHUNK_2] → [0, 2]
-    """
-    return [int(x) for x in CHUNK_PATTERN.findall(answer)]
-
-
-def check_groundedness(
-    answer: str,
-    sources: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Groundedness check:
-    - Answer must contain chunk tags
-    - Chunk tags must exist in retrieved sources
-    """
-
-    chunk_ids_in_answer = extract_chunk_ids(answer)
-
-    if not chunk_ids_in_answer:
-        return {
-            "grounded": False,
-            "reason": "NO_CHUNK_TAG",
-            "details": "Answer does not contain any [CHUNK_x] tags."
-        }
-
-    valid_chunk_ids = {
-        src.get("chunk_id") for src in sources
-    }
-
-    invalid_refs = [
-        cid for cid in chunk_ids_in_answer
-        if cid not in valid_chunk_ids
-    ]
-
-    if invalid_refs:
-        return {
-            "grounded": False,
-            "reason": "INVALID_CHUNK_REFERENCE",
-            "details": f"Referenced chunk(s) not in sources: {invalid_refs}"
-        }
-
-    return {
-        "grounded": True,
-        "reason": "OK",
-        "details": f"All referenced chunks are valid: {chunk_ids_in_answer}"
-    }
-
-==============================
-FILE: .\backend\eval\metrics.py
-==============================
-def groundedness_score(sources, expected_sources):
-    if not sources:
-        return 0.0
-
-    matched = 0
-    for src in sources:
-        source_file = src.get("source_file", "")
-        if any(exp in source_file for exp in expected_sources):
-            matched += 1
-
-    return matched / len(expected_sources)
-
-
-def citation_coverage(sources):
-    if not sources:
-        return 0.0
-
-    cited = [s for s in sources if s.get("page") is not None]
-    return len(cited) / len(sources)
-
-
-def hallucination_flag(sources):
-    return len(sources) == 0
-
-==============================
-FILE: .\backend\eval\runner.py
-==============================
-from backend.eval.datasets import EVAL_DATASET
-from backend.eval.evaluator import evaluate_sample
-from backend.logging.audit import audit_log
-
-def run_evaluation():
-    results = []
-
-    for sample in EVAL_DATASET:
-        result = evaluate_sample({
-            "id": sample.id,
-            "question": sample.question
-        })
-
-        results.append(result)
-
-        audit_log(
-            user="system_eval",
-            action="evaluation_run",
-            payload=result
-        )
-
-    return results
-
-==============================
-FILE: .\backend\eval\__init__.py
-==============================
-
-==============================
-FILE: .\backend\guardrails\citation.py
-==============================
-def format_citations(source_documents):
-    citations = []
-    for doc in source_documents:
-        meta = doc.metadata
-        citations.append({
-            "source": meta.get("source", "unknown"),
-            "page": meta.get("page", None)
-        })
-    return citations
-
-==============================
-FILE: .\backend\guardrails\grounding.py
-==============================
-from typing import List
-
-MIN_DOCS_REQUIRED = 1
-
-def check_grounding(source_documents: List):
-    if not source_documents or len(source_documents) < MIN_DOCS_REQUIRED:
-        raise ValueError(
-            "Không tìm thấy tài liệu liên quan. "
-            "Hệ thống không thể trả lời để tránh sai lệch học thuật."
-        )
-
-==============================
-FILE: .\backend\guardrails\rate_limit.py
-==============================
-import time
-
-REQUEST_LIMIT = 20
-WINDOW_SECONDS = 60
-
-_user_requests = {}
-
-def check_rate_limit(user_id: str):
-    now = time.time()
-    timestamps = _user_requests.get(user_id, [])
-
-    timestamps = [t for t in timestamps if now - t < WINDOW_SECONDS]
-
-    if len(timestamps) >= REQUEST_LIMIT:
-        raise ValueError("Bạn gửi quá nhiều yêu cầu. Vui lòng thử lại sau.")
-
-    timestamps.append(now)
-    _user_requests[user_id] = timestamps
-
 ==============================
 FILE: .\backend\llm\llm.py
 ==============================
@@ -1710,364 +1346,143 @@ FILE: .\backend\llm\__init__.py
 ==============================
 
 ==============================
-FILE: .\backend\logging\audit.py
+FILE: .\backend\rag\canonicalize.py
 ==============================
-import json
-import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import List
-
-LOG_PATH = Path("data/audit.log")
-
-def audit_log(
-    user: str,
-    action: str,
-    payload: dict,
-    course_id: str | None = None,
-    chunk_ids: List[str] | None = None,
-    model_name: str | None = None,
-    request_id: str | None = None
-):
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    record = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "request_id": request_id or str(uuid.uuid4()),
-        "user": user,
-        "action": action,
-        "course_id": course_id,
-        "chunk_ids": chunk_ids or [],
-        "model": model_name or "offline_stub",
-        "payload": payload,
-        "schema": "academic_audit_v3"
-    }
-
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-==============================
-FILE: .\backend\pedagogy\bloom.py
-==============================
-from enum import Enum
-from typing import List
-
-
-class BloomLevel(str, Enum):
-    """
-    Bloom's Taxonomy – Cognitive Domain
-    """
-
-    REMEMBER = "remember"
-    UNDERSTAND = "understand"
-    APPLY = "apply"
-    ANALYZE = "analyze"
-    EVALUATE = "evaluate"
-    CREATE = "create"
-
-    @property
-    def description(self) -> str:
-        return {
-            self.REMEMBER: "Nhớ lại thông tin, định nghĩa, thuật ngữ",
-            self.UNDERSTAND: "Giải thích, mô tả, diễn giải ý nghĩa",
-            self.APPLY: "Áp dụng kiến thức vào bài toán cụ thể",
-            self.ANALYZE: "Phân tích, so sánh, chỉ ra mối quan hệ",
-            self.EVALUATE: "Đánh giá, nhận xét, phản biện",
-            self.CREATE: "Tổng hợp, thiết kế, xây dựng mới"
-        }[self]
-
-    @property
-    def action_verbs(self) -> List[str]:
-        """
-        Gợi ý động từ dùng trong câu hỏi / bài tập
-        """
-        return {
-            self.REMEMBER: ["liệt kê", "nêu", "định nghĩa", "kể tên"],
-            self.UNDERSTAND: ["giải thích", "trình bày", "mô tả", "tóm tắt"],
-            self.APPLY: ["áp dụng", "tính toán", "giải", "thực hiện"],
-            self.ANALYZE: ["phân tích", "so sánh", "phân loại", "làm rõ"],
-            self.EVALUATE: ["đánh giá", "nhận xét", "phản biện", "so sánh ưu nhược điểm"],
-            self.CREATE: ["thiết kế", "xây dựng", "đề xuất", "phát triển"]
-        }[self]
-
-    @classmethod
-    def ordered_levels(cls) -> List["BloomLevel"]:
-        """
-        Trả về Bloom levels theo thứ tự tăng dần độ khó
-        """
-        return [
-            cls.REMEMBER,
-            cls.UNDERSTAND,
-            cls.APPLY,
-            cls.ANALYZE,
-            cls.EVALUATE,
-            cls.CREATE
-        ]
-
-==============================
-FILE: .\backend\pedagogy\generator.py
-==============================
-import json
-import re
-from backend.llm.llm import llm_instance
-
-def clean_json_response(raw_text: str) -> str:
-    """
-    Loại bỏ các ký tự Markdown thừa [cite: 65]
-    """
-    # Xử lý trường hợp LLM trả về ```json ... ``` hoặc văn bản bao quanh JSON
-    json_match = re.search(r"(\{.*\}|\[.*\])", raw_text, re.DOTALL)
-    if json_match:
-        return json_match.group(1).strip()
-    return raw_text.strip()
-
-def generate_lesson_plan(topic: str, context: str = ""):
-    prompt = f"""
-    Hãy đóng vai là một chuyên gia sư phạm.
-    Chủ đề: {topic}
-    Ngữ cảnh tài liệu: {context}
-    
-    Hãy tạo một giáo án chi tiết dưới định dạng JSON với các trường:
-    - title, objectives, activities
-    Chỉ trả về JSON. [cite: 66, 67, 68]
-    """
-    
-    raw_response = llm_instance.invoke(prompt)
-    cleaned_json = clean_json_response(raw_response)
-    
-    try:
-        return json.loads(cleaned_json)
-    except json.JSONDecodeError:
-        # Fallback nếu JSON vẫn lỗi [cite: 69]
-        return {
-            "title": topic,
-            "objectives": ["Không thể tạo mục tiêu tự động"],
-            "activities": [],
-            "error": "AI trả về định dạng không hợp lệ"
-        }
-==============================
-FILE: .\backend\pedagogy\prompts.py
-==============================
-from backend.pedagogy.bloom import BloomLevel
-
-
-QUESTION_PROMPT_TEMPLATE = """
-Bạn là AI Trợ Giảng.
-
-NHIỆM VỤ:
-Sinh {num_items} CÂU HỎI học tập theo mức độ Bloom: {bloom_level}
-
-MÔ TẢ MỨC ĐỘ:
-{bloom_description}
-
-YÊU CẦU BẮT BUỘC:
-- CHỈ sử dụng thông tin trong TÀI LIỆU bên dưới
-- Không suy đoán, không thêm kiến thức bên ngoài
-- Mỗi câu hỏi phải bám sát nội dung tài liệu
-- Mức độ nhận thức phải đúng Bloom level
-- Không trùng lặp câu hỏi
-
-TÀI LIỆU:
-{context}
-
-ĐỊNH DẠNG TRẢ VỀ (JSON):
-[
-  {{
-    "question": "...",
-    "bloom_level": "{bloom_level}",
-    "learning_objective": "...",
-    "difficulty": "easy | medium | hard"
-  }}
-]
-"""
-
-
-ASSIGNMENT_PROMPT_TEMPLATE = """
-Bạn là AI Trợ Giảng.
-
-NHIỆM VỤ:
-Sinh {num_items} BÀI TẬP học tập theo mức độ Bloom: {bloom_level}
-
-MÔ TẢ MỨC ĐỘ:
-{bloom_description}
-
-YÊU CẦU BẮT BUỘC:
-- CHỈ sử dụng thông tin trong TÀI LIỆU bên dưới
-- Không suy đoán, không thêm kiến thức bên ngoài
-- Bài tập phải yêu cầu người học vận dụng đúng mức Bloom
-- Có mô tả rõ yêu cầu đầu ra
-
-TÀI LIỆU:
-{context}
-
-ĐỊNH DẠNG TRẢ VỀ (JSON):
-[
-  {{
-    "title": "...",
-    "task": "...",
-    "expected_output": "...",
-    "bloom_level": "{bloom_level}",
-    "difficulty": "easy | medium | hard"
-  }}
-]
-"""
-
-
-def build_question_prompt(
-    context: str,
-    bloom: BloomLevel,
-    num_items: int = 3
-) -> str:
-    return QUESTION_PROMPT_TEMPLATE.format(
-        num_items=num_items,
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-
-def build_assignment_prompt(
-    context: str,
-    bloom: BloomLevel,
-    num_items: int = 2
-) -> str:
-    return ASSIGNMENT_PROMPT_TEMPLATE.format(
-        num_items=num_items,
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-==============================
-FILE: .\backend\pedagogy\rubric.py
-==============================
-import json
 from typing import List, Dict, Any
 
-from backend.pedagogy.bloom import BloomLevel
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import get_llm
+def canonicalize_pages(extracted_pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Chuyển đổi dữ liệu thô từ PDF/OCR thành Canonical Structured Data.
+    
+    Quy tắc:
+    - Input: List[{page, text, source}]
+    - Output: List[{page, source, lines: [{line_id, text}]}]
+    - Xử lý: Tách dòng, clean whitespace, đánh số line_id nội bộ theo trang.
+    
+    Args:
+        extracted_pages (List[Dict]): Dữ liệu từ bước PDF->TXT.
 
+    Returns:
+        List[Dict]: Cấu trúc dữ liệu chuẩn hóa theo dòng.
+    """
+    # 1. Đảm bảo đúng thứ tự trang (tăng dần)
+    sorted_pages = sorted(extracted_pages, key=lambda x: x.get("page", 0))
+    
+    canonical_data = []
 
-CONTEXT_TOP_K = 5
+    for page_data in sorted_pages:
+        page_num = page_data.get("page", 0)
+        source = page_data.get("source", "unknown")
+        raw_text = page_data.get("text", "") or ""
 
+        clean_lines_list = []
+        line_counter = 1
+        
+        # Tách dòng dựa trên ký tự newline
+        raw_lines = raw_text.splitlines()
+        
+        for line in raw_lines:
+            # 2. Clean text: Strip whitespace đầu/cuối
+            clean_content = line.strip()
+            
+            # 3. Bỏ dòng rỗng hoàn toàn
+            if not clean_content:
+                continue
+                
+            # 4. Tạo Line Object
+            clean_lines_list.append({
+                "line_id": line_counter,
+                "text": clean_content
+            })
+            line_counter += 1
 
-def retrieve_context(topic: str) -> str:
-    results = hybrid_search(topic)
-    contexts = []
+        # Tạo Page Object hoàn chỉnh
+        page_structure = {
+            "page": page_num,
+            "source": source,
+            "lines": clean_lines_list
+        }
+        
+        canonical_data.append(page_structure)
 
-    for doc, _ in results[:CONTEXT_TOP_K]:
-        contexts.append(doc.page_content)
+    return canonical_data
+==============================
+FILE: .\backend\rag\chunking.py
+==============================
+# FILE: backend/rag/chunking.py
+import uuid
+from typing import List, Dict, Any
 
-    return "\n\n".join(contexts)
+# CẤU HÌNH SOFT RULES
+MIN_CHUNK_CHARS = 300
+MAX_CHUNK_CHARS = 800
 
-
-RUBRIC_PROMPT_TEMPLATE = """
-Bạn là GIẢNG VIÊN.
-
-NHIỆM VỤ:
-Xây dựng RUBRIC CHẤM ĐIỂM cho bài học với mức độ Bloom: {bloom_level}
-
-MÔ TẢ MỨC ĐỘ:
-{bloom_description}
-
-YÊU CẦU:
-- Chỉ sử dụng thông tin trong TÀI LIỆU
-- Rubric phải đánh giá đúng mức Bloom
-- Có nhiều tiêu chí chấm điểm
-- Có mô tả rõ cho từng mức điểm
-
-TÀI LIỆU:
-{context}
-
-ĐỊNH DẠNG TRẢ VỀ (JSON):
-[
-  {{
-    "criterion": "...",
-    "levels": {{
-      "excellent": "...",
-      "good": "...",
-      "average": "...",
-      "poor": "..."
-    }}
-  }}
-]
-"""
-
-
-def generate_rubric(
-    topic: str,
-    bloom: BloomLevel
+def chunk_canonical_data(
+    canonical_pages: List[Dict[str, Any]], 
+    doc_id: str
 ) -> List[Dict[str, Any]]:
     """
-    Generate grading rubric based on Bloom level
+    Tạo chunks từ dữ liệu Canonical tuân thủ Strict Page/Line Boundaries.
+    
+    Args:
+        canonical_pages: Output từ bước canonicalize (List các Page objects).
+        doc_id: ID của tài liệu gốc.
+
+    Returns:
+        List[Dict]: Danh sách chunks theo schema bắt buộc.
     """
+    chunks = []
 
-    context = retrieve_context(topic)
+    # RULE 1: Duyệt theo từng Page (Không bao giờ vượt Page)
+    for page_data in canonical_pages:
+        page_num = page_data.get("page")
+        lines = page_data.get("lines", [])
+        
+        if not lines:
+            continue
 
-    if not context.strip():
-        raise ValueError("No relevant learning material found.")
+        # Buffer cho chunk hiện tại
+        current_buffer = []
+        current_char_count = 0
+        
+        # Duyệt tuần tự các dòng trong trang
+        for i, line in enumerate(lines):
+            line_text = line.get("text", "")
+            line_len = len(line_text)
+            
+            # Thêm dòng vào buffer tạm
+            current_buffer.append(line)
+            current_char_count += line_len
+            
+            # RULE 4 (Soft): Kiểm tra kích thước để ngắt chunk
+            # Ngắt khi vượt quá MAX_CHUNK_CHARS hoặc là dòng cuối cùng của trang
+            is_last_line = (i == len(lines) - 1)
 
-    prompt = RUBRIC_PROMPT_TEMPLATE.format(
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
+            if (
+                is_last_line
+                or (
+                    current_char_count >= MIN_CHUNK_CHARS
+                    and (i + 1 < len(lines))
+                    and (current_char_count + len(lines[i + 1].get("text", ""))) > MAX_CHUNK_CHARS
+                )
+            ):
+                if current_buffer:
+                    chunk_text = "\n".join([l["text"] for l in current_buffer])
+                    
+                    chunk_obj = {
+                        "doc_id": doc_id,
+                        "page": page_num,
+                        "line_start": current_buffer[0]["line_id"],
+                        "line_end": current_buffer[-1]["line_id"],
+                        "text": chunk_text
+                    }
+                    
+                    chunks.append(chunk_obj)
+                
+                current_buffer = []
+                current_char_count = 0
 
-    llm = get_llm()
-    raw = llm.invoke(prompt)
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError("LLM output is not valid JSON.")
-
-==============================
-FILE: .\backend\pedagogy\schemas.py
-==============================
-from pydantic import BaseModel
-from typing import List, Optional
-
-class TaskRequest(BaseModel):
-    task_type: str   # lesson_plan | assignment | exam | rubric | quiz
-    subject: str
-    clo: Optional[List[str]] = None
-    bloom_level: Optional[str] = None
-    difficulty: Optional[str] = None
-    num_items: Optional[int] = None
-    duration_minutes: Optional[int] = None
-
-==============================
-FILE: .\backend\pedagogy\templates.py
-==============================
-LESSON_PLAN_TEMPLATE = """
-Bạn là trợ giảng đại học.
-Dựa CHỈ trên tài liệu sau:
-{context}
-
-Hãy soạn giáo án cho môn: {subject}
-CLO: {clo}
-Thời lượng: {duration} phút
-
-Yêu cầu:
-- Không thêm kiến thức ngoài tài liệu
-- Cấu trúc rõ ràng
-- Có hoạt động GV/SV
-"""
-
-==============================
-FILE: .\backend\pedagogy\validators.py
-==============================
-def validate_groundedness(answer, sources):
-    if not sources:
-        raise ValueError(
-            "Nội dung sinh ra không có căn cứ từ tài liệu."
-        )
-
-==============================
-FILE: .\backend\pedagogy\__init__.py
-==============================
-
+    return chunks
 ==============================
 FILE: .\backend\rag\hybrid_retriever.py
 ==============================
@@ -2126,1568 +1541,43 @@ def hybrid_search(query: str, course_id: str = "default_course", k: int = 5):
 FILE: .\backend\rag\ingest.py
 ==============================
 import os
-from backend.vectorstore.faiss_store import embeddings_instance
+from pathlib import Path
 from langchain_community.vectorstores import FAISS
+
+from backend.vectorstore.faiss_store import get_faiss_store, embeddings_instance
 from backend.utils.text_extraction import extract_text
 from backend.utils.chunking import chunk_text
 from backend.vectorstore.bm25_store import BM25Store
 
+RAW_DOCS_DIR = "data/raw_docs"
+
 def ingest_document(file_path: str, course_id: str):
-    # 1. Trích xuất văn bản
-    text = extract_text(file_path)
+    # 1. Generate Document ID & Filename
     file_name = os.path.basename(file_path)
+    document_id = Path(file_path).stem
+    
+    print(f"📥 Starting Ingestion: {file_name} (ID: {document_id})")
 
-    # 2. Chia nhỏ văn bản
-    docs = chunk_text(text, source_file=file_name)
+    # 2. Extract Text -> Canonical Format (Page-delimited)
+    canonical_content = extract_text(file_path, document_id)
 
-    # 3. FAISS
-    index_path = os.path.join("data", "faiss_index", course_id)
+    # 3. Persist Canonical TXT
+    if not os.path.exists(RAW_DOCS_DIR):
+        os.makedirs(RAW_DOCS_DIR)
+        
+    txt_path = os.path.join(RAW_DOCS_DIR, f"{document_id}.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(canonical_content)
 
-    if os.path.exists(os.path.join(index_path, "index.faiss")):
-        vector_store = FAISS.load_local(
-            index_path,
-            embeddings_instance,
-            allow_dangerous_deserialization=True
-        )
-        vector_store.add_documents(docs)
-    else:
-        vector_store = FAISS.from_documents(docs, embeddings_instance)
+    # 4. Chunking (Dựa trên header trong canonical content)
+    # chunk_text sẽ parse header để lấy metadata (page, ocr flag)
+    docs = chunk_text(canonical_content, source_file=file_name)
 
-    os.makedirs(index_path, exist_ok=True)
-    vector_store.save_local(index_path)
-
-    # 4. BM25
-    bm25_store = BM25Store.load(course_id)
-    bm25_store.add_documents(docs)
-    bm25_store.save()
-
-    print(f"✅ Ingest xong cho course {course_id}")
-
-==============================
-FILE: .\backend\rag\__init__.py
-==============================
-
-==============================
-FILE: .\backend\utils\chunking.py
-==============================
-# backend/utils/chunking.py
-
-import uuid
-from typing import List
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
-
-
-
-def chunk_text(
-    text: str,
-    source_file: str,
-    page: int = None,
-    section: str = None,
-    chunk_size: int = 400,
-    chunk_overlap: int = 80
-) -> List[Document]:
-    """
-    Chunk text into Documents with full metadata
-    """
-
-    doc_id = str(uuid.uuid4())
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ".", " ", ""]
-    )
-
-    chunks = splitter.split_text(text)
-
-    documents = []
-
-    for idx, chunk in enumerate(chunks):
-        metadata = {
-            "doc_id": doc_id,
-            "source_file": source_file,
-            "page": page,
-            "section": section,
-            "chunk_id": idx
-        }
-
-        documents.append(
-            Document(
-                page_content=chunk,
-                metadata=metadata
-            )
-        )
-
-    return documents
-
-==============================
-FILE: .\backend\utils\citation.py
-==============================
-def format_apa(source: dict) -> str:
-    """
-    APA 7th basic format
-    """
-    author = "Unknown"
-    year = "n.d."
-    title = source.get("source_file", "Unknown document")
-    page = source.get("page")
-
-    page_part = f" (p. {page})" if page is not None else ""
-
-    return f"{author} ({year}). {title}{page_part}."
-
-
-def format_ieee(source: dict, index: int) -> str:
-    """
-    IEEE basic format
-    """
-    title = source.get("source_file", "Unknown document")
-    page = source.get("page")
-
-    page_part = f", p. {page}" if page is not None else ""
-
-    return f"[{index}] {title}{page_part}."
-
-==============================
-FILE: .\backend\utils\text_extraction.py
-==============================
-from pathlib import Path
-from pypdf import PdfReader
-from docx import Document as DocxDocument
-
-
-def extract_text(file_path: str) -> str:
-    ext = Path(file_path).suffix.lower()
-
-    if ext == ".pdf":
-        reader = PdfReader(file_path)
-        return "\n".join(
-            page.extract_text() or ""
-            for page in reader.pages
-        )
-
-    if ext in [".docx"]:
-        doc = DocxDocument(file_path)
-        return "\n".join(p.text for p in doc.paragraphs)
-
-    if ext in [".txt"]:
-        with open(file_path, encoding="utf-8", errors="ignore") as f:
-            return f.read()
-
-    raise ValueError(f"Unsupported file type: {ext}")
-
-==============================
-FILE: .\backend\vectorstore\bm25_store.py
-==============================
-import pickle
-from pathlib import Path
-from typing import List, Tuple
-from rank_bm25 import BM25Okapi
-from langchain_core.documents import Document
-
-class BM25Store:
-    def __init__(self, course_id: str):
-        self.course_id = course_id
-        self.documents: List[Document] = []
-        self.corpus = []
-        self.bm25 = None
-        self.storage_path = Path(f"data/bm25_{course_id}.pkl") # Tách biệt theo course [cite: 82]
-
-    def add_documents(self, docs: List[Document]):
-        for doc in docs:
-            tokens = doc.page_content.lower().split()
-            self.documents.append(doc)
-            self.corpus.append(tokens)
-        self.bm25 = BM25Okapi(self.corpus)
-
-    def search(self, query: str, k: int = 5) -> List[Tuple[Document, float]]:
-        if not self.bm25:
-            return []
-        query_tokens = query.lower().split()
-        scores = self.bm25.get_scores(query_tokens)
-        ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:k]
-        return [(self.documents[idx], score) for idx, score in ranked if score > 0]
-
-    def save(self):
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.storage_path, "wb") as f:
-            pickle.dump(self, f)
-
-    @classmethod
-    def load(cls, course_id: str):
-        """
-        FIX: Trả về một instance đã load dữ liệu thay vì instance trống 
-        """
-        instance = cls(course_id)
-        if instance.storage_path.exists():
-            with open(instance.storage_path, "rb") as f:
-                loaded_data = pickle.load(f)
-                instance.documents = loaded_data.documents
-                instance.corpus = loaded_data.corpus
-                instance.bm25 = loaded_data.bm25
-        return instance
-==============================
-FILE: .\backend\vectorstore\faiss_store.py
-==============================
-import os
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-
-# Sử dụng model nhỏ để tiết kiệm RAM
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-
-# Khởi tạo singleton để dùng chung toàn hệ thống, tránh tốn RAM [cite: 99]
-embeddings_instance = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
-
-def get_faiss_store(index_path: str):
-    """
-    Load FAISS store từ đĩa nếu tồn tại, nếu không trả về None [cite: 99]
-    """
-    if os.path.exists(os.path.join(index_path, "index.faiss")):
-        return FAISS.load_local(
-            index_path, 
-            embeddings_instance, 
-            allow_dangerous_deserialization=True
-        )
-    return None
-==============================
-FILE: .\data\raw_docs\3816581988b745c5adab034455adf57d.txt
-==============================
-Thủ đô của Việt Nam là Hà Nội. Khóa học ML101 dạy về Machine Learning cơ bản.
-==============================
-FILE: .\data\raw_docs\694467e3464045b9803fbba62508179e.txt
-==============================
-
-====================
-FILE: .\bundle.py
-====================
-import os
-
-def bundle_code(output_file="project_code.txt"):
-    extensions = ['.py', '.jsx', '.js', '.css', '.html']
-    with open(output_file, 'w', encoding='utf-8') as outfile:
-        for root, dirs, files in os.walk("."):
-            # Bỏ qua các thư mục rác
-            if 'venv' in root or 'node_modules' in root or '.git' in root:
-                continue
-            for file in files:
-                if any(file.endswith(ext) for ext in extensions):
-                    full_path = os.path.join(root, file)
-                    outfile.write(f"\n{'='*20}\nFILE: {full_path}\n{'='*20}\n")
-                    with open(full_path, 'r', encoding='utf-8', errors='ignore') as infile:
-                        outfile.write(infile.read())
-    print(f"Đã gom code xong vào file: {output_file}")
-
-if __name__ == "__main__":
-    bundle_code()
-====================
-FILE: .\check_imports.py
-====================
-import pkgutil
-import importlib
-import traceback
-
-BASE_PACKAGE = "backend"
-
-errors = []
-
-for module in pkgutil.walk_packages([BASE_PACKAGE], BASE_PACKAGE + "."):
-    name = module.name
-    try:
-        importlib.import_module(name)
-    except Exception as e:
-        errors.append((name, e))
-
-print("\n====== IMPORT ERRORS ======")
-for name, err in errors:
-    print(f"\n❌ {name}")
-    traceback.print_exception(type(err), err, err.__traceback__)
-
-print(f"\nTotal errors: {len(errors)}")
-
-====================
-FILE: .\main.py
-====================
-import uvicorn
-import os
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-
-# Import các router
-from backend.api import auth, upload, chat, courses
-from backend.database.db_config import init_db
-
-app = FastAPI(title="AI Teaching Assistant System")
-
-# Cấu hình CORS để Frontend (Port 5173) gọi được Backend (Port 8000)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Trong production nên đổi thành ["http://localhost:5173"]
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Đăng ký Router
-app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(courses.router, prefix="/courses", tags=["Courses"])
-app.include_router(upload.router, prefix="/upload", tags=["Upload"])
-app.include_router(chat.router, prefix="/chat", tags=["AI Chat"])
-
-# Mount thư mục upload để có thể truy cập file nếu cần (Optional)
-if not os.path.exists("uploads"):
-    os.makedirs("uploads")
-# app.mount("/static", StaticFiles(directory="uploads"), name="static")
-
-@app.on_event("startup")
-def startup_event():
-    init_db()
-    print("🚀 Hệ thống AI Trợ giảng đã sẵn sàng!")
-    print("👉 Swagger UI: http://localhost:8000/docs")
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-====================
-FILE: .\quick_test.py
-====================
-import os
-import sys
-from pathlib import Path
-
-# Đảm bảo Python tìm thấy module backend
-sys.path.append(str(Path(__file__).parent))
-
-def setup_and_test():
-    print("🚀 Bắt đầu kiểm tra hệ thống...")
-
-    # 1. Tạo các thư mục cần thiết
-    folders = ["data/faiss_index", "data/bm25", "uploads"]
-    for f in folders:
-        os.makedirs(f, exist_ok=True)
-        print(f"✅ Đã tạo/kiểm tra thư mục: {f}")
-
-    # 2. Tạo file dữ liệu mẫu để test
-    sample_file = "uploads/test_knowledge.txt"
-    with open(sample_file, "w", encoding="utf-8") as f:
-        f.write("Thủ đô của Việt Nam là Hà Nội. Khóa học ML101 dạy về Machine Learning cơ bản.")
-    print(f"✅ Đã tạo file dữ liệu mẫu: {sample_file}")
-
-    # 3. Test Ingest
-    print("📥 Đang nạp dữ liệu vào Vector DB...")
-    from backend.rag.ingest import ingest_document
-    try:
-        ingest_document(sample_file, "ML101")
-        print("✅ Ingest thành công!")
-    except Exception as e:
-        print(f"❌ Lỗi Ingest: {e}")
+    if not docs:
+        print("⚠️ Warning: No chunks generated.")
         return
 
-    # 4. Test Query
-    print("🔍 Đang thử hỏi AI...")
-    from backend.agent.qa import answer_question
-    result = answer_question("Thủ đô của Việt Nam là gì?", "ML101")
-    
-    print("\n--- KẾT QUẢ TEST ---")
-    print(f"Câu hỏi: Thủ đô của Việt Nam là gì?")
-    print(f"AI trả lời: {result['answer']}")
-    if result['sources']:
-        print(f"Nguồn tìm thấy: {len(result['sources'])} đoạn văn.")
-        print("🎉 HỆ THỐNG ĐÃ SẴN SÀNG!")
-    else:
-        print("⚠️ AI trả lời nhưng không tìm thấy nguồn. Kiểm tra lại hybrid_retriever.")
-
-if __name__ == "__main__":
-    setup_and_test()
-====================
-FILE: .\backend\__init__.py
-====================
-
-====================
-FILE: .\backend\agent\prompt.py
-====================
-SYSTEM_PROMPT = """
-Bạn là AI trợ giảng học thuật.
-
-Quy tắc bắt buộc:
-- Chỉ trả lời dựa trên nội dung tài liệu được cung cấp.
-- Nếu không tìm thấy thông tin trong tài liệu, hãy trả lời: 
-  "Tôi không tìm thấy thông tin trong tài liệu."
-- Không được suy đoán hoặc bịa.
-- Trả lời ngắn gọn, đúng trọng tâm.
-"""
-
-====================
-FILE: .\backend\agent\qa.py
-====================
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import llm_instance
-from backend.agent.prompt import SYSTEM_PROMPT
-
-def answer_question(question: str, course_id: str) -> dict:
-    # 1. Thực hiện tìm kiếm lai (Vector + BM25)
-    context_docs = hybrid_search(query=question, course_id=course_id)
-
-    if not context_docs:
-        return {
-            "answer": "Tôi không tìm thấy thông tin liên quan trong tài liệu của khóa học này.",
-            "sources": []
-        }
-
-    # 2. Gom nhóm nội dung tìm được
-    # Lấy top 3 đoạn văn bản có điểm số cao nhất để làm ngữ cảnh
-    context_text = "\n---\n".join([doc["content"] for doc in context_docs[:3]])
-
-    # 3. Tạo Prompt (Vẫn giữ cấu trúc để sau này dễ nâng cấp LLM thật)
-    full_prompt = f"""{SYSTEM_PROMPT}
-
-Ngữ cảnh tài liệu:
-{context_text}
-
-Câu hỏi người dùng: {question}
-Trả lời:"""
-
-    try:
-        # Gọi Mock LLM xử lý local
-        response = llm_instance.invoke(full_prompt)
-    except Exception as e:
-        response = f"Hệ thống đang bảo trì phần xử lý ngôn ngữ. Chi tiết: {str(e)}"
-
-    return {
-        "answer": response,
-        "sources": context_docs
-    }
-====================
-FILE: .\backend\agent\__init__.py
-====================
-
-====================
-FILE: .\backend\api\auth.py
-====================
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
-from backend.auth.users import get_user, verify_password
-from backend.auth.security import create_access_token
-
-router = APIRouter()
-
-@router.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    """
-    Endpoint Login chuẩn OAuth2.
-    Yêu cầu: Gửi dữ liệu dưới dạng FORM-DATA (không phải JSON).
-    Swagger UI sẽ hiển thị 2 ô nhập Username và Password riêng biệt.
-    """
-    # 1. Lấy user từ DB giả lập bằng form_data.username
-    user = get_user(form_data.username)
-    
-    # 2. Kiểm tra tồn tại và verify password (bcrypt)
-    if not user or not verify_password(form_data.password, user["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Tên đăng nhập hoặc mật khẩu không chính xác",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # 3. Tạo Token mang thông tin định danh
-    access_token = create_access_token(
-        data={"sub": user["username"], "role": user["role"]}
-    )
-    
-    # 4. Trả về đúng schema OAuth2 (access_token và token_type là bắt buộc)
-    return {
-        "access_token": access_token, 
-        "token_type": "bearer",
-        "role": user["role"]
-    }
-====================
-FILE: .\backend\api\chat.py
-====================
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from backend.agent.qa import answer_question
-
-router = APIRouter()
-
-class ChatRequest(BaseModel):
-    course_id: str
-    question: str
-
-@router.post("/")
-async def chat(request: ChatRequest):
-    # Đã bỏ phần check_course_access để ưu tiên tính năng
-    try:
-        # Gọi thẳng vào logic xử lý RAG
-        result = answer_question(request.question, request.course_id)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
-====================
-FILE: .\backend\api\courses.py
-====================
-import os
-import uuid
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
-from backend.rag.ingest import ingest_document
-from backend.auth.deps import require_teacher
-
-router = APIRouter(prefix="/courses", tags=["Courses"])
-
-@router.post("/{course_id}/upload")
-def upload_document(
-    course_id: str, 
-    file: UploadFile = File(...), 
-    user=Depends(require_teacher) # Chỉ Giáo viên mới được upload
-):
-    """
-    Tải lên tài liệu và xử lý đưa vào Vector Store.
-    Sửa lỗi: Tránh trùng tên file và kiểm tra thư mục tồn tại.
-    """
-    upload_dir = "data/raw_docs"
-    
-    # Đảm bảo thư mục lưu trữ tồn tại
-    if not os.path.exists(upload_dir):
-        os.makedirs(upload_dir)
-
-    # FIX: Tạo tên file duy nhất bằng UUID để không bị ghi đè
-    file_extension = os.path.splitext(file.filename)[1]
-    unique_filename = f"{uuid.uuid4().hex}{file_extension}"
-    file_location = os.path.join(upload_dir, unique_filename)
-
-    try:
-        # Lưu file vào ổ đĩa
-        with open(file_location, "wb") as f:
-            content = file.file.read()
-            f.write(content)
-        
-        # Gọi module RAG để đánh index (Hàm ingest này đã được fix ở bước 1)
-        ingest_document(file_location, course_id)
-        
-        return {
-            "message": "Tải lên và xử lý tài liệu thành công",
-            "original_name": file.filename,
-            "saved_as": unique_filename
-        }
-    except Exception as e:
-        # Xóa file nếu quá trình xử lý thất bại để tránh rác dữ liệu
-        if os.path.exists(file_location):
-            os.remove(file_location)
-        raise HTTPException(status_code=500, detail=f"Lỗi xử lý file: {str(e)}")
-====================
-FILE: .\backend\api\eval.py
-====================
-from fastapi import APIRouter
-from backend.eval.runner import run_evaluation
-
-router = APIRouter(prefix="/eval", tags=["Eval"])
-
-@router.post(
-    "/run",
-    operation_id="eval_run"
-)
-def run_eval():
-    return run_evaluation()
-
-====================
-FILE: .\backend\api\pedagogy.py
-====================
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/pedagogy", tags=["Pedagogy"])
-
-@router.post(
-    "/generate",
-    operation_id="pedagogy_generate"
-)
-def generate():
-    return {"status": "ok"}
-
-====================
-FILE: .\backend\api\upload.py
-====================
-import os
-import uuid
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from backend.rag.ingest import ingest_document
-
-router = APIRouter()
-
-UPLOAD_DIR = "data/raw_docs"
-
-@router.post("/")
-async def upload_document(course_id: str, file: UploadFile = File(...)):
-    if not os.path.exists(UPLOAD_DIR):
-        os.makedirs(UPLOAD_DIR)
-
-    # FIX: Tạo tên file duy nhất tránh ghi đè [cite: 20]
-    file_extension = os.path.splitext(file.filename)[1]
-    unique_filename = f"{uuid.uuid4().hex}{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
-    
-    try:
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        # Ingest dữ liệu vào vector store theo course_id [cite: 24, 84]
-        ingest_document(file_path, course_id)
-
-        return {
-            "message": f"Upload thành công file {file.filename}",
-            "saved_as": unique_filename
-        }
-    except Exception as e:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(status_code=500, detail=str(e))
-====================
-FILE: .\backend\api\__init__.py
-====================
-
-====================
-FILE: .\backend\auth\deps.py
-====================
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from backend.auth.security import verify_token
-
-# URL này phải khớp với prefix trong main.py + route trong auth.py
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
-
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    payload = verify_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token không hợp lệ hoặc đã hết hạn",
-        )
-    return payload
-====================
-FILE: .\backend\auth\roles.py
-====================
-from enum import Enum
-
-class UserRole(str, Enum):
-    STUDENT = "student"
-    TEACHER = "teacher"
-
-====================
-FILE: .\backend\auth\security.py
-====================
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
-
-# Cấu hình cứng để dev local không bị invalid token khi restart
-SECRET_KEY = "DEV_SECRET_KEY_LOCAL_123"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 1440 # 24 giờ
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def verify_token(token: str):
-    """Giải mã token để lấy payload"""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload if payload.get("sub") else None
-    except JWTError:
-        return None
-====================
-FILE: .\backend\auth\users.py
-====================
-from passlib.context import CryptContext
-
-# Khởi tạo context: passlib tự xử lý encoding và salt chuẩn cho bcrypt
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """So sánh mật khẩu plaintext và mật khẩu đã hash"""
-    try:
-        return pwd_context.verify(plain_password, hashed_password)
-    except Exception:
-        return False
-
-def get_password_hash(password: str) -> str:
-    """Tạo hash mới cho mật khẩu"""
-    return pwd_context.hash(password)
-
-# MẬT KHẨU TEST LÀ: 123456
-# Hash này đã được tạo và kiểm tra bằng passlib
-CLEAN_HASH = "$2b$12$R9h/lIPzMZ7E22NVjtORV.p6zif6oUaQW.mHnc6vSOfKy8nS.E8S."
-
-USERS_DB = {
-    "teacher1": {
-        "username": "teacher1",
-        "password_hash": CLEAN_HASH,
-        "role": "teacher"
-    },
-    "student1": {
-        "username": "student1",
-        "password_hash": CLEAN_HASH,
-        "role": "student"
-    }
-}
-
-def get_user(username: str):
-    return USERS_DB.get(username.lower())
-====================
-FILE: .\backend\courses\access.py
-====================
-def check_course_access(user, course):
-    if user["role"] == "teacher":
-        return course.owner_id == user["id"]
-    if user["role"] == "student":
-        # MVP: cho phép tất cả SV (sau này gắn class)
-        return True
-    return False
-
-====================
-FILE: .\backend\courses\models.py
-====================
-from dataclasses import dataclass
-
-@dataclass
-class Course:
-    course_id: str
-    name: str
-    owner_id: str  # giảng viên
-
-====================
-FILE: .\backend\courses\service.py
-====================
-from backend.courses.models import Course
-
-# MVP: in-memory, sau này thay DB
-COURSES = {}
-
-def create_course(course_id: str, name: str, owner_id: str):
-    course = Course(course_id, name, owner_id)
-    COURSES[course_id] = course
-    return course
-
-def get_course(course_id: str):
-    return COURSES.get(course_id)
-
-def list_courses_by_owner(owner_id: str):
-    return [c for c in COURSES.values() if c.owner_id == owner_id]
-
-====================
-FILE: .\backend\courses\__init__.py
-====================
-
-====================
-FILE: .\backend\database\db_config.py
-====================
-import sqlite3
-from pathlib import Path
-
-DB_PATH = Path("data/app_database.db")
-
-def get_db_connection():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row # Để truy xuất theo tên cột
-    return conn
-
-def init_db():
-    conn = get_db_connection()
-    # Tạo bảng khóa học và bảng người dùng nếu chưa có
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS courses (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            teacher_id TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-====================
-FILE: .\backend\eval\datasets.py
-====================
-from dataclasses import dataclass
-from typing import List
-
-@dataclass
-class EvalSample:
-    id: int
-    question: str
-    expected_answer: str | None = None
-
-EVAL_DATASET: List[EvalSample] = [
-    EvalSample(
-        id=1,
-        question="FAISS là gì trong hệ thống RAG?"
-    ),
-    EvalSample(
-        id=2,
-        question="BM25 dùng để làm gì?"
-    ),
-]
-
-====================
-FILE: .\backend\eval\evaluator.py
-====================
-from backend.rag.hybrid_retriever import hybrid_search
-
-MIN_RETRIEVAL_SCORE = 0.15
-
-def evaluate_sample(sample: dict) -> dict:
-    """
-    sample = {
-        id: int,
-        question: str
-    }
-    """
-
-    question = sample.get("question")
-    if not question:
-        raise ValueError("Missing question in eval sample")
-
-    results = hybrid_search(question)
-
-    grounded = False
-    used_chunks = []
-
-    for doc, score in results:
-        if score >= MIN_RETRIEVAL_SCORE:
-            grounded = True
-            used_chunks.append({
-                "chunk_id": doc.metadata.get("chunk_id"),
-                "source_file": doc.metadata.get("source_file"),
-                "score": round(score, 4)
-            })
-
-    return {
-        "id": sample.get("id"),
-        "question": question,
-        "grounded": grounded,
-        "num_chunks": len(used_chunks),
-        "chunks": used_chunks,
-        "score": 1.0 if grounded else 0.0
-    }
-
-====================
-FILE: .\backend\eval\faithfulness.py
-====================
-import re
-from typing import Dict, Any, List
-
-
-STOPWORDS = {
-    "là", "và", "của", "trong", "cho", "với", "một", "các",
-    "được", "khi", "này", "đó", "như", "để"
-}
-
-
-def normalize(text: str) -> List[str]:
-    """
-    Normalize text into keyword tokens
-    """
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9à-ỹ\s]", " ", text)
-    tokens = text.split()
-    return [t for t in tokens if t not in STOPWORDS and len(t) > 2]
-
-
-def extract_claim_sentences(answer: str) -> List[str]:
-    """
-    Split answer into claim sentences (remove chunk tags)
-    """
-    clean = re.sub(r"\[CHUNK_\d+\]", "", answer)
-    sentences = re.split(r"[.\n]", clean)
-    return [s.strip() for s in sentences if len(s.strip()) > 20]
-
-
-def check_faithfulness(
-    answer: str,
-    contexts: List[str],
-    min_overlap_ratio: float = 0.3
-) -> Dict[str, Any]:
-    """
-    Faithfulness check:
-    - Each claim sentence must overlap sufficiently with context keywords
-    """
-
-    context_text = " ".join(contexts)
-    context_tokens = set(normalize(context_text))
-
-    claims = extract_claim_sentences(answer)
-
-    if not claims:
-        return {
-            "faithful": False,
-            "reason": "NO_CLAIM_SENTENCE",
-            "details": "No valid claim sentence found in answer."
-        }
-
-    unfaithful_claims = []
-
-    for claim in claims:
-        claim_tokens = normalize(claim)
-
-        if not claim_tokens:
-            continue
-
-        overlap = set(claim_tokens) & context_tokens
-        overlap_ratio = len(overlap) / len(set(claim_tokens))
-
-        if overlap_ratio < min_overlap_ratio:
-            unfaithful_claims.append({
-                "claim": claim,
-                "overlap_ratio": round(overlap_ratio, 2)
-            })
-
-    if unfaithful_claims:
-        return {
-            "faithful": False,
-            "reason": "LOW_CONTEXT_OVERLAP",
-            "details": unfaithful_claims
-        }
-
-    return {
-        "faithful": True,
-        "reason": "OK",
-        "details": "All claims sufficiently supported by context."
-    }
-
-====================
-FILE: .\backend\eval\groundedness.py
-====================
-import re
-from typing import Dict, Any, List
-
-
-CHUNK_PATTERN = re.compile(r"\[CHUNK_(\d+)\]")
-
-
-def extract_chunk_ids(answer: str) -> List[int]:
-    """
-    Extract chunk indices from answer text.
-    Example: [CHUNK_0], [CHUNK_2] → [0, 2]
-    """
-    return [int(x) for x in CHUNK_PATTERN.findall(answer)]
-
-
-def check_groundedness(
-    answer: str,
-    sources: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Groundedness check:
-    - Answer must contain chunk tags
-    - Chunk tags must exist in retrieved sources
-    """
-
-    chunk_ids_in_answer = extract_chunk_ids(answer)
-
-    if not chunk_ids_in_answer:
-        return {
-            "grounded": False,
-            "reason": "NO_CHUNK_TAG",
-            "details": "Answer does not contain any [CHUNK_x] tags."
-        }
-
-    valid_chunk_ids = {
-        src.get("chunk_id") for src in sources
-    }
-
-    invalid_refs = [
-        cid for cid in chunk_ids_in_answer
-        if cid not in valid_chunk_ids
-    ]
-
-    if invalid_refs:
-        return {
-            "grounded": False,
-            "reason": "INVALID_CHUNK_REFERENCE",
-            "details": f"Referenced chunk(s) not in sources: {invalid_refs}"
-        }
-
-    return {
-        "grounded": True,
-        "reason": "OK",
-        "details": f"All referenced chunks are valid: {chunk_ids_in_answer}"
-    }
-
-====================
-FILE: .\backend\eval\metrics.py
-====================
-def groundedness_score(sources, expected_sources):
-    if not sources:
-        return 0.0
-
-    matched = 0
-    for src in sources:
-        source_file = src.get("source_file", "")
-        if any(exp in source_file for exp in expected_sources):
-            matched += 1
-
-    return matched / len(expected_sources)
-
-
-def citation_coverage(sources):
-    if not sources:
-        return 0.0
-
-    cited = [s for s in sources if s.get("page") is not None]
-    return len(cited) / len(sources)
-
-
-def hallucination_flag(sources):
-    return len(sources) == 0
-
-====================
-FILE: .\backend\eval\runner.py
-====================
-from backend.eval.datasets import EVAL_DATASET
-from backend.eval.evaluator import evaluate_sample
-from backend.logging.audit import audit_log
-
-def run_evaluation():
-    results = []
-
-    for sample in EVAL_DATASET:
-        result = evaluate_sample({
-            "id": sample.id,
-            "question": sample.question
-        })
-
-        results.append(result)
-
-        audit_log(
-            user="system_eval",
-            action="evaluation_run",
-            payload=result
-        )
-
-    return results
-
-====================
-FILE: .\backend\eval\__init__.py
-====================
-
-====================
-FILE: .\backend\guardrails\citation.py
-====================
-def format_citations(source_documents):
-    citations = []
-    for doc in source_documents:
-        meta = doc.metadata
-        citations.append({
-            "source": meta.get("source", "unknown"),
-            "page": meta.get("page", None)
-        })
-    return citations
-
-====================
-FILE: .\backend\guardrails\grounding.py
-====================
-from typing import List
-
-MIN_DOCS_REQUIRED = 1
-
-def check_grounding(source_documents: List):
-    if not source_documents or len(source_documents) < MIN_DOCS_REQUIRED:
-        raise ValueError(
-            "Không tìm thấy tài liệu liên quan. "
-            "Hệ thống không thể trả lời để tránh sai lệch học thuật."
-        )
-
-====================
-FILE: .\backend\guardrails\rate_limit.py
-====================
-import time
-
-REQUEST_LIMIT = 20
-WINDOW_SECONDS = 60
-
-_user_requests = {}
-
-def check_rate_limit(user_id: str):
-    now = time.time()
-    timestamps = _user_requests.get(user_id, [])
-
-    timestamps = [t for t in timestamps if now - t < WINDOW_SECONDS]
-
-    if len(timestamps) >= REQUEST_LIMIT:
-        raise ValueError("Bạn gửi quá nhiều yêu cầu. Vui lòng thử lại sau.")
-
-    timestamps.append(now)
-    _user_requests[user_id] = timestamps
-
-====================
-FILE: .\backend\llm\llm.py
-====================
-import re
-
-class LocalMockLLM:
-    """
-    Mock LLM Engine: Xử lý câu trả lời dựa trên Retrieval Context.
-    Đảm bảo không phụ thuộc vào thư viện bên ngoài (g4f, openai, etc.)
-    """
-    def __init__(self, model_name: str = "offline-pedagogy-v1"):
-        self.model_name = model_name
-
-    def invoke(self, prompt: str) -> str:
-        # 1. Trích xuất ngữ cảnh từ prompt (Dựa trên cấu trúc trong qa.py)
-        # Tìm nội dung nằm giữa 'Ngữ cảnh tài liệu:' và 'Câu hỏi người dùng:'
-        context_match = re.search(r"Ngữ cảnh tài liệu:(.*?)Câu hỏi người dùng:", prompt, re.DOTALL)
-        
-        if not context_match:
-            return "Tôi không tìm thấy thông tin phù hợp trong tài liệu của khóa học này."
-
-        context = context_match.group(1).strip()
-        
-        # 2. Logic Rule-based: Trả về đoạn văn bản phù hợp nhất từ context
-        # Ở đây ta ưu tiên trả về toàn bộ ngữ cảnh đã được tìm thấy bởi RAG
-        if len(context) > 5:
-            return f"Dựa trên tài liệu khóa học, tôi xin giải đáp như sau:\n\n{context}"
-        
-        return "Tài liệu được cung cấp không đủ thông tin để trả lời câu hỏi này."
-
-# Khởi tạo instance duy nhất cho toàn hệ thống
-llm_instance = LocalMockLLM()
-
-def get_llm():
-    return llm_instance
-====================
-FILE: .\backend\llm\__init__.py
-====================
-
-====================
-FILE: .\backend\logging\audit.py
-====================
-import json
-import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import List
-
-LOG_PATH = Path("data/audit.log")
-
-def audit_log(
-    user: str,
-    action: str,
-    payload: dict,
-    course_id: str | None = None,
-    chunk_ids: List[str] | None = None,
-    model_name: str | None = None,
-    request_id: str | None = None
-):
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    record = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "request_id": request_id or str(uuid.uuid4()),
-        "user": user,
-        "action": action,
-        "course_id": course_id,
-        "chunk_ids": chunk_ids or [],
-        "model": model_name or "offline_stub",
-        "payload": payload,
-        "schema": "academic_audit_v3"
-    }
-
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-====================
-FILE: .\backend\pedagogy\bloom.py
-====================
-from enum import Enum
-from typing import List
-
-
-class BloomLevel(str, Enum):
-    """
-    Bloom's Taxonomy – Cognitive Domain
-    """
-
-    REMEMBER = "remember"
-    UNDERSTAND = "understand"
-    APPLY = "apply"
-    ANALYZE = "analyze"
-    EVALUATE = "evaluate"
-    CREATE = "create"
-
-    @property
-    def description(self) -> str:
-        return {
-            self.REMEMBER: "Nhớ lại thông tin, định nghĩa, thuật ngữ",
-            self.UNDERSTAND: "Giải thích, mô tả, diễn giải ý nghĩa",
-            self.APPLY: "Áp dụng kiến thức vào bài toán cụ thể",
-            self.ANALYZE: "Phân tích, so sánh, chỉ ra mối quan hệ",
-            self.EVALUATE: "Đánh giá, nhận xét, phản biện",
-            self.CREATE: "Tổng hợp, thiết kế, xây dựng mới"
-        }[self]
-
-    @property
-    def action_verbs(self) -> List[str]:
-        """
-        Gợi ý động từ dùng trong câu hỏi / bài tập
-        """
-        return {
-            self.REMEMBER: ["liệt kê", "nêu", "định nghĩa", "kể tên"],
-            self.UNDERSTAND: ["giải thích", "trình bày", "mô tả", "tóm tắt"],
-            self.APPLY: ["áp dụng", "tính toán", "giải", "thực hiện"],
-            self.ANALYZE: ["phân tích", "so sánh", "phân loại", "làm rõ"],
-            self.EVALUATE: ["đánh giá", "nhận xét", "phản biện", "so sánh ưu nhược điểm"],
-            self.CREATE: ["thiết kế", "xây dựng", "đề xuất", "phát triển"]
-        }[self]
-
-    @classmethod
-    def ordered_levels(cls) -> List["BloomLevel"]:
-        """
-        Trả về Bloom levels theo thứ tự tăng dần độ khó
-        """
-        return [
-            cls.REMEMBER,
-            cls.UNDERSTAND,
-            cls.APPLY,
-            cls.ANALYZE,
-            cls.EVALUATE,
-            cls.CREATE
-        ]
-
-====================
-FILE: .\backend\pedagogy\generator.py
-====================
-import json
-import re
-from backend.llm.llm import llm_instance
-
-def clean_json_response(raw_text: str) -> str:
-    """
-    Loại bỏ các ký tự Markdown thừa [cite: 65]
-    """
-    # Xử lý trường hợp LLM trả về ```json ... ``` hoặc văn bản bao quanh JSON
-    json_match = re.search(r"(\{.*\}|\[.*\])", raw_text, re.DOTALL)
-    if json_match:
-        return json_match.group(1).strip()
-    return raw_text.strip()
-
-def generate_lesson_plan(topic: str, context: str = ""):
-    prompt = f"""
-    Hãy đóng vai là một chuyên gia sư phạm.
-    Chủ đề: {topic}
-    Ngữ cảnh tài liệu: {context}
-    
-    Hãy tạo một giáo án chi tiết dưới định dạng JSON với các trường:
-    - title, objectives, activities
-    Chỉ trả về JSON. [cite: 66, 67, 68]
-    """
-    
-    raw_response = llm_instance.invoke(prompt)
-    cleaned_json = clean_json_response(raw_response)
-    
-    try:
-        return json.loads(cleaned_json)
-    except json.JSONDecodeError:
-        # Fallback nếu JSON vẫn lỗi [cite: 69]
-        return {
-            "title": topic,
-            "objectives": ["Không thể tạo mục tiêu tự động"],
-            "activities": [],
-            "error": "AI trả về định dạng không hợp lệ"
-        }
-====================
-FILE: .\backend\pedagogy\prompts.py
-====================
-from backend.pedagogy.bloom import BloomLevel
-
-
-QUESTION_PROMPT_TEMPLATE = """
-Bạn là AI Trợ Giảng.
-
-NHIỆM VỤ:
-Sinh {num_items} CÂU HỎI học tập theo mức độ Bloom: {bloom_level}
-
-MÔ TẢ MỨC ĐỘ:
-{bloom_description}
-
-YÊU CẦU BẮT BUỘC:
-- CHỈ sử dụng thông tin trong TÀI LIỆU bên dưới
-- Không suy đoán, không thêm kiến thức bên ngoài
-- Mỗi câu hỏi phải bám sát nội dung tài liệu
-- Mức độ nhận thức phải đúng Bloom level
-- Không trùng lặp câu hỏi
-
-TÀI LIỆU:
-{context}
-
-ĐỊNH DẠNG TRẢ VỀ (JSON):
-[
-  {{
-    "question": "...",
-    "bloom_level": "{bloom_level}",
-    "learning_objective": "...",
-    "difficulty": "easy | medium | hard"
-  }}
-]
-"""
-
-
-ASSIGNMENT_PROMPT_TEMPLATE = """
-Bạn là AI Trợ Giảng.
-
-NHIỆM VỤ:
-Sinh {num_items} BÀI TẬP học tập theo mức độ Bloom: {bloom_level}
-
-MÔ TẢ MỨC ĐỘ:
-{bloom_description}
-
-YÊU CẦU BẮT BUỘC:
-- CHỈ sử dụng thông tin trong TÀI LIỆU bên dưới
-- Không suy đoán, không thêm kiến thức bên ngoài
-- Bài tập phải yêu cầu người học vận dụng đúng mức Bloom
-- Có mô tả rõ yêu cầu đầu ra
-
-TÀI LIỆU:
-{context}
-
-ĐỊNH DẠNG TRẢ VỀ (JSON):
-[
-  {{
-    "title": "...",
-    "task": "...",
-    "expected_output": "...",
-    "bloom_level": "{bloom_level}",
-    "difficulty": "easy | medium | hard"
-  }}
-]
-"""
-
-
-def build_question_prompt(
-    context: str,
-    bloom: BloomLevel,
-    num_items: int = 3
-) -> str:
-    return QUESTION_PROMPT_TEMPLATE.format(
-        num_items=num_items,
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-
-def build_assignment_prompt(
-    context: str,
-    bloom: BloomLevel,
-    num_items: int = 2
-) -> str:
-    return ASSIGNMENT_PROMPT_TEMPLATE.format(
-        num_items=num_items,
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-====================
-FILE: .\backend\pedagogy\rubric.py
-====================
-import json
-from typing import List, Dict, Any
-
-from backend.pedagogy.bloom import BloomLevel
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import get_llm
-
-
-CONTEXT_TOP_K = 5
-
-
-def retrieve_context(topic: str) -> str:
-    results = hybrid_search(topic)
-    contexts = []
-
-    for doc, _ in results[:CONTEXT_TOP_K]:
-        contexts.append(doc.page_content)
-
-    return "\n\n".join(contexts)
-
-
-RUBRIC_PROMPT_TEMPLATE = """
-Bạn là GIẢNG VIÊN.
-
-NHIỆM VỤ:
-Xây dựng RUBRIC CHẤM ĐIỂM cho bài học với mức độ Bloom: {bloom_level}
-
-MÔ TẢ MỨC ĐỘ:
-{bloom_description}
-
-YÊU CẦU:
-- Chỉ sử dụng thông tin trong TÀI LIỆU
-- Rubric phải đánh giá đúng mức Bloom
-- Có nhiều tiêu chí chấm điểm
-- Có mô tả rõ cho từng mức điểm
-
-TÀI LIỆU:
-{context}
-
-ĐỊNH DẠNG TRẢ VỀ (JSON):
-[
-  {{
-    "criterion": "...",
-    "levels": {{
-      "excellent": "...",
-      "good": "...",
-      "average": "...",
-      "poor": "..."
-    }}
-  }}
-]
-"""
-
-
-def generate_rubric(
-    topic: str,
-    bloom: BloomLevel
-) -> List[Dict[str, Any]]:
-    """
-    Generate grading rubric based on Bloom level
-    """
-
-    context = retrieve_context(topic)
-
-    if not context.strip():
-        raise ValueError("No relevant learning material found.")
-
-    prompt = RUBRIC_PROMPT_TEMPLATE.format(
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-    llm = get_llm()
-    raw = llm.invoke(prompt)
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError("LLM output is not valid JSON.")
-
-====================
-FILE: .\backend\pedagogy\schemas.py
-====================
-from pydantic import BaseModel
-from typing import List, Optional
-
-class TaskRequest(BaseModel):
-    task_type: str   # lesson_plan | assignment | exam | rubric | quiz
-    subject: str
-    clo: Optional[List[str]] = None
-    bloom_level: Optional[str] = None
-    difficulty: Optional[str] = None
-    num_items: Optional[int] = None
-    duration_minutes: Optional[int] = None
-
-====================
-FILE: .\backend\pedagogy\templates.py
-====================
-LESSON_PLAN_TEMPLATE = """
-Bạn là trợ giảng đại học.
-Dựa CHỈ trên tài liệu sau:
-{context}
-
-Hãy soạn giáo án cho môn: {subject}
-CLO: {clo}
-Thời lượng: {duration} phút
-
-Yêu cầu:
-- Không thêm kiến thức ngoài tài liệu
-- Cấu trúc rõ ràng
-- Có hoạt động GV/SV
-"""
-
-====================
-FILE: .\backend\pedagogy\validators.py
-====================
-def validate_groundedness(answer, sources):
-    if not sources:
-        raise ValueError(
-            "Nội dung sinh ra không có căn cứ từ tài liệu."
-        )
-
-====================
-FILE: .\backend\pedagogy\__init__.py
-====================
-
-====================
-FILE: .\backend\rag\hybrid_retriever.py
-====================
-from backend.vectorstore.faiss_store import get_faiss_store
-from backend.vectorstore.bm25_store import BM25Store
-import os
-
-def hybrid_search(query: str, course_id: str, k: int = 5):
-    if not query or len(query.strip()) < 2:
-        return []
-
-    # FIX: Đường dẫn phải khớp với logic trong ingest.py
-    index_path = os.path.join("data", "faiss_index", course_id)
-    
-    vector_store = get_faiss_store(index_path)
-    bm25_store = BM25Store.load(course_id)
-
-    vector_results = []
-    if vector_store:
-        # Trả về Document và score
-        vector_results = vector_store.similarity_search_with_score(query, k=k)
-
-    bm25_results = []
-    if bm25_store:
-        bm25_results = bm25_store.search(query, k=k)
-
-    combined = []
-    # Chuẩn hóa format kết quả trả về cho Frontend và Agent
-    for doc, score in vector_results:
-        combined.append({
-            "content": doc.page_content, 
-            "source_file": doc.metadata.get("source_file", "Unknown"),
-            "page": doc.metadata.get("page"),
-            "section": doc.metadata.get("section"),
-            "chunk_id": doc.metadata.get("chunk_id"),
-            "score": float(score),
-            "type": "vector"
-        })
-    
-    for doc, score in bm25_results:
-        combined.append({
-            "content": doc.page_content, 
-            "source_file": doc.metadata.get("source_file", "Unknown"),
-            "page": doc.metadata.get("page"),
-            "section": doc.metadata.get("section"),
-            "chunk_id": doc.metadata.get("chunk_id"),
-            "score": float(score),
-            "type": "bm25"
-        })
-
-    # Sắp xếp theo score và lấy k kết quả đầu tiên
-    return combined[:k]
-====================
-FILE: .\backend\rag\ingest.py
-====================
-import os
-from backend.vectorstore.faiss_store import embeddings_instance
-from langchain_community.vectorstores import FAISS
-from backend.utils.text_extraction import extract_text
-from backend.utils.chunking import chunk_text
-from backend.vectorstore.bm25_store import BM25Store
-
-def ingest_document(file_path: str, course_id: str):
-    # 1. Trích xuất văn bản
-    text = extract_text(file_path)
-    file_name = os.path.basename(file_path)
-
-    # 2. Chia nhỏ văn bản (Sử dụng utils để có metadata chuẩn cho Eval) [cite: 78, 79]
-    docs = chunk_text(text, source_file=file_name)
-
-    # 3. Xử lý Vector Store (FAISS)
+    # 5. Ingest FAISS
     index_path = os.path.join("data", "faiss_index", course_id)
     
     if os.path.exists(os.path.join(index_path, "index.faiss")):
@@ -3705,73 +1595,333 @@ def ingest_document(file_path: str, course_id: str):
     
     vector_store.save_local(index_path)
 
-    # 4. Xử lý Keyword Store (BM25) - Quan trọng để hybrid_search không lỗi [cite: 85, 87]
+    # 6. Ingest BM25
     bm25_store = BM25Store.load(course_id)
     bm25_store.add_documents(docs)
     bm25_store.save()
 
-    print(f"Thành công: Đã cập nhật FAISS và BM25 cho môn {course_id}")
-====================
-FILE: .\backend\rag\__init__.py
-====================
+    print(f"✅ Ingest Complete: {len(docs)} chunks indexed for {course_id}")
+==============================
+FILE: .\backend\rag\llama_config.py
+==============================
+# FILE: backend/rag/llama_config.py
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core import Settings
 
-====================
-FILE: .\backend\utils\chunking.py
-====================
-# backend/utils/chunking.py
+# Cấu hình Embedding Model (Dùng chung 1 model duy nhất)
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
-import uuid
-from typing import List
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
+def get_embedding_model():
+    return HuggingFaceEmbedding(model_name=EMBEDDING_MODEL_NAME)
 
+# Thiết lập Global Settings
+Settings.embed_model = get_embedding_model()
+Settings.llm = None  # Ingest phase không cần LLM
+==============================
+FILE: .\backend\rag\llama_ingest.py
+==============================
+# FILE: backend/rag/llama_ingest.py
+import os
+import faiss
+from typing import List, Set
 
+from llama_index.core import (
+    VectorStoreIndex, 
+    StorageContext, 
+    load_index_from_storage
+)
+from llama_index.vector_stores.faiss import FaissVectorStore
 
-def chunk_text(
-    text: str,
-    source_file: str,
-    page: int = None,
-    section: str = None,
-    chunk_size: int = 400,
-    chunk_overlap: int = 80
-) -> List[Document]:
+# Import internal modules
+from backend.rag.llama_config import get_embedding_model
+from backend.rag.node_parser import convert_chunks_to_nodes
+
+# Path for Index Storage
+INDEX_ROOT_DIR = "data/llama_index"
+
+def get_index_path(course_id: str) -> str:
+    return os.path.join(INDEX_ROOT_DIR, course_id)
+
+def get_or_create_index(course_id: str, vector_dim: int = 384) -> VectorStoreIndex:
     """
-    Chunk text into Documents with full metadata
+    Load existing index or create new one with FAISS backend.
     """
-
-    doc_id = str(uuid.uuid4())
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ".", " ", ""]
+    persist_dir = get_index_path(course_id)
+    
+    # 1. Try Loading Existing Index
+    if os.path.exists(persist_dir) and os.path.exists(os.path.join(persist_dir, "docstore.json")):
+        try:
+            vector_store = FaissVectorStore.from_persist_dir(persist_dir)
+            storage_context = StorageContext.from_defaults(
+                vector_store=vector_store, 
+                persist_dir=persist_dir
+            )
+            index = load_index_from_storage(storage_context, embed_model=get_embedding_model())
+            return index
+        except Exception as e:
+            print(f"⚠️ Error loading index: {e}. Recreating...")
+    
+    # 2. Create New Index if load failed or not exists
+    print(f"🆕 Creating new LlamaIndex for {course_id}...")
+    faiss_index = faiss.IndexFlatL2(vector_dim)
+    vector_store = FaissVectorStore(faiss_index=faiss_index)
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    
+    index = VectorStoreIndex(
+        nodes=[], 
+        storage_context=storage_context, 
+        embed_model=get_embedding_model()
     )
+    return index
 
-    chunks = splitter.split_text(text)
+def ingest_canonical_chunks(
+    chunks: List[dict], 
+    course_id: str, 
+    file_name: str,
+    doc_id: str
+):
+    """
+    Main Pipeline: Chunk -> Node -> Deduplicate -> Index -> Persist
+    """
+    persist_dir = get_index_path(course_id)
 
-    documents = []
+    # 1. Convert to LlamaIndex Nodes
+    new_nodes = convert_chunks_to_nodes(chunks, doc_id, file_name)
+    
+    if not new_nodes:
+        print("⚠️ No valid nodes to ingest.")
+        return None
 
-    for idx, chunk in enumerate(chunks):
+    # 2. Initialize/Load Index
+    index = get_or_create_index(course_id)
+    
+    # 3. Deduplication Logic (Strict Check)
+    # Check against keys in DocStore (since node.id_ is set to content_hash)
+    existing_hashes: Set[str] = set()
+    try:
+        # This gets all keys in the docstore. For MVP/medium data, this is acceptable.
+        for node_id in index.docstore.docs.keys():
+            existing_hashes.add(node_id)
+    except Exception:
+        pass 
+
+    nodes_to_insert = []
+    skipped_count = 0
+
+    for node in new_nodes:
+        if node.node_id in existing_hashes:
+            skipped_count += 1
+            continue
+        
+        nodes_to_insert.append(node)
+        existing_hashes.add(node.node_id) # Add to local set for batch dedup
+
+    if skipped_count > 0:
+        print(f"🔎 Dedup check: Skipped {skipped_count} duplicate chunks.")
+
+    # 4. Insert Nodes & Persist
+    if nodes_to_insert:
+        index.insert_nodes(nodes_to_insert)
+        print(f"✅ Inserted {len(nodes_to_insert)} new nodes.")
+        
+        if not os.path.exists(persist_dir):
+            os.makedirs(persist_dir)
+        
+        index.storage_context.persist(persist_dir=persist_dir)
+        print(f"💾 Index saved to {persist_dir}")
+    else:
+        print("⏩ No new unique nodes to index.")
+
+    return index
+==============================
+FILE: .\backend\rag\node_parser.py
+==============================
+# FILE: backend/rag/node_parser.py
+import hashlib
+from datetime import datetime
+from typing import List, Dict, Any
+from llama_index.core.schema import TextNode
+
+# Configuration
+INGEST_VERSION = "v1.0"
+EMBEDDING_MODEL_TAG = "sentence-transformers/all-MiniLM-L6-v2"
+
+def compute_content_hash(text: str) -> str:
+    """Generate SHA256 hash for text content to detect duplicates."""
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+def convert_chunks_to_nodes(
+    chunks: List[Dict[str, Any]], 
+    document_id: str,
+    file_name: str
+) -> List[TextNode]:
+    """
+    Convert Chunk Dicts to LlamaIndex TextNodes with strict metadata mapping.
+    One Chunk = One TextNode.
+    """
+    nodes = []
+    
+    for chunk in chunks:
+        # 1. Validate Input
+        text_content = chunk.get("text", "")
+        if not text_content.strip():
+            continue
+            
+        content_hash = compute_content_hash(text_content)
+        
+        # 2. Build Strict Metadata (Page + Lines)
         metadata = {
-            "doc_id": doc_id,
-            "source_file": source_file,
-            "page": page,
-            "section": section,
-            "chunk_id": idx
+            "doc_id": document_id,
+            "file_name": file_name,
+            "page": chunk.get("page"),           # Strict: must be present
+            "line_start": chunk.get("line_start"),
+            "line_end": chunk.get("line_end"),
+            "source": chunk.get("sources", ["unknown"])[0] if "sources" in chunk else "unknown",
+            "content_hash": content_hash,
+            "ingest_time": datetime.utcnow().isoformat(),
+            "index_version": INGEST_VERSION,
+            "embedding_model": EMBEDDING_MODEL_TAG
         }
 
-        documents.append(
-            Document(
-                page_content=chunk,
-                metadata=metadata
-            )
+        # 3. Create TextNode
+        # Use content_hash as ID for system-level deduplication capability
+        node = TextNode(
+            text=text_content,
+            id_=content_hash, 
+            metadata=metadata
         )
+        
+        # 4. Exclude metadata from Embedding and LLM context to save tokens/noise
+        # Embedding sees only text (and maybe context if configured, but keeping it clean here)
+        node.excluded_embed_metadata_keys = [
+            "ingest_time", "index_version", "content_hash", 
+            "line_start", "line_end", "embedding_model", "doc_id", "page", "file_name", "source"
+        ]
+        # LLM sees text + minimal context (page, source)
+        node.excluded_llm_metadata_keys = [
+            "content_hash", "index_version", "embedding_model", "ingest_time", "doc_id"
+        ]
 
-    return documents
+        nodes.append(node)
 
-====================
+    return nodes
+==============================
+FILE: .\backend\rag\retrieval.py
+==============================
+from typing import List, Dict, Any
+from backend.vectorstore.faiss_store import get_faiss_store
+from backend.vectorstore.bm25_store import BM25Store
+from backend.rag.llama_config import get_llama_retriever # Giả định import từ project tree
+
+# Cấu hình cố định theo SPEC
+THRESHOLD = 0.2
+TOP_K_RETRIEVAL = 10
+TOP_K_FINAL = 5
+
+def normalize_scores(scores: List[float]) -> List[float]:
+    """Min-Max Normalization to [0, 1] range."""
+    if not scores: return []
+    min_s, max_s = min(scores), max(scores)
+    if max_s == min_s: return [1.0 for _ in scores] if max_s > 0 else [0.0 for _ in scores]
+    return [(s - min_s) / (max_s - min_s) for s in scores]
+
+def hybrid_search(query: str, course_id: str, k: int = TOP_K_FINAL) -> List[Dict[str, Any]]:
+    """
+    FIXED Hybrid Search: Vector (LlamaIndex) + BM25.
+    Tuân thủ: Chunk Boundary Dedup, No Python hash(), Strict Metadata, Refusal Logic.
+    """
+    if not query or not query.strip():
+        return []
+
+    # 1. Vector Retrieval
+    vector_retriever = get_llama_retriever(course_id, top_k=TOP_K_RETRIEVAL)
+    vector_nodes = []
+    if vector_retriever:
+        try:
+            vector_nodes = vector_retriever.retrieve(query)
+        except Exception:
+            vector_nodes = []
+
+    # 2. BM25 Retrieval
+    bm25_store = BM25Store.load(course_id)
+    bm25_docs = []
+    if bm25_store:
+        bm25_docs = bm25_store.search(query, k=TOP_K_RETRIEVAL)
+
+    # 3. Score Normalization
+    v_scores = normalize_scores([n.score for n in vector_nodes])
+    b_scores = normalize_scores([d.get("score", 0.0) for d in bm25_docs])
+
+    # 4. Weighted Fusion & Strict Logic
+    # Dùng dictionary để dedup theo CHUNK BOUNDARY
+    # key = doc_id | page | line_start | line_end
+    fused_map = {}
+
+    # Fusion rules: 0.6 Vector / 0.4 BM25
+    
+    # Process Vector Results
+    for i, node in enumerate(vector_nodes):
+        meta = node.metadata
+        # 5. Metadata Validation (Drop if missing)
+        required = ["doc_id", "page", "line_start", "line_end", "file_name"]
+        if not all(meta.get(f) is not None for f in required):
+            continue
+            
+        # 1. Dedup theo Chunk Boundary (No Python hash)
+        chunk_id = f"{meta['doc_id']}_{meta['page']}_{meta['line_start']}_{meta['line_end']}"
+        
+        if chunk_id not in fused_map:
+            # 4. Flatten Metadata Output Schema
+            fused_map[chunk_id] = {
+                "text": node.text,
+                "doc_id": meta["doc_id"],
+                "page": meta["page"],
+                "line_start": meta["line_start"],
+                "line_end": meta["line_end"],
+                "file_name": meta["file_name"],
+                "final_score": 0.0
+            }
+        fused_map[chunk_id]["final_score"] += v_scores[i] * 0.6
+
+    # Process BM25 Results
+    for i, doc in enumerate(bm25_docs):
+        meta = doc.get("metadata", {})
+        if not all(meta.get(f) is not None for f in required):
+            continue
+            
+        chunk_id = f"{meta['doc_id']}_{meta['page']}_{meta['line_start']}_{meta['line_end']}"
+        
+        if chunk_id not in fused_map:
+            fused_map[chunk_id] = {
+                "text": doc.get("text", ""),
+                "doc_id": meta["doc_id"],
+                "page": meta["page"],
+                "line_start": meta["line_start"],
+                "line_end": meta["line_end"],
+                "file_name": meta["file_name"],
+                "final_score": 0.0
+            }
+        fused_map[chunk_id]["final_score"] += b_scores[i] * 0.4
+
+    # 3. Refusal Logic (Threshold & Empty check)
+    final_list = [
+        res for res in fused_map.values() 
+        if res["final_score"] >= THRESHOLD
+    ]
+    
+    if not final_list:
+        return []
+
+    # Sort & Return top K
+    final_list.sort(key=lambda x: x["final_score"], reverse=True)
+    return final_list[:k]
+==============================
+FILE: .\backend\rag\__init__.py
+==============================
+
+==============================
 FILE: .\backend\utils\citation.py
-====================
+==============================
 def format_apa(source: dict) -> str:
     """
     APA 7th basic format
@@ -3797,37 +1947,211 @@ def format_ieee(source: dict, index: int) -> str:
 
     return f"[{index}] {title}{page_part}."
 
-====================
+==============================
+FILE: .\backend\utils\ocr.py
+==============================
+import logging
+import numpy as np
+from paddleocr import PaddleOCR
+
+logger = logging.getLogger(__name__)
+
+_ocr_engine = None
+
+def get_ocr_engine():
+    global _ocr_engine
+    if _ocr_engine is None:
+        # lang='vi' hỗ trợ tiếng Việt, use_angle_cls để xoay ảnh nghiêng
+        _ocr_engine = PaddleOCR(use_angle_cls=True, lang='vi', show_log=False)
+    return _ocr_engine
+
+def ocr_image(image_obj) -> str:
+    """
+    OCR ảnh PIL. Trả về text hoặc None nếu lỗi.
+    """
+    try:
+        ocr = get_ocr_engine()
+        # Chuyển PIL Image sang numpy array
+        img_np = np.array(image_obj)
+        result = ocr.ocr(img_np, cls=True)
+        
+        lines = []
+        if result and result[0]:
+            lines = [line[1][0] for line in result[0]]
+        
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"❌ OCR Internal Error: {e}")
+        return None
+==============================
 FILE: .\backend\utils\text_extraction.py
-====================
+==============================
+import logging
+import os
 from pathlib import Path
+from typing import List, Dict, Any
+
 from pypdf import PdfReader
+from pdf2image import convert_from_path
 from docx import Document as DocxDocument
 
+# Import module OCR đã có sẵn trong hệ thống
+from backend.utils.ocr import ocr_image
 
-def extract_text(file_path: str) -> str:
+# Cấu hình Logger
+logger = logging.getLogger(__name__)
+
+# Ngưỡng ký tự trung bình mỗi trang để quyết định dùng OCR
+# Nếu pypdf lấy được ít hơn số này, coi là file scan
+TEXT_DENSITY_THRESHOLD = 50 
+
+
+def extract_text(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Hàm entry point duy nhất để trích xuất văn bản.
+    
+    Args:
+        file_path (str): Đường dẫn tới file cần xử lý.
+        
+    Returns:
+        List[Dict]: Danh sách các trang văn bản với định dạng thống nhất:
+        [
+            {
+                "page": int,      # Số trang (bắt đầu từ 1)
+                "text": str,      # Nội dung văn bản thô
+                "source": str     # Công cụ trích xuất ('pypdf', 'paddle_ocr', 'docx', 'text')
+            },
+            ...
+        ]
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
     ext = Path(file_path).suffix.lower()
 
-    if ext == ".pdf":
+    try:
+        if ext == ".pdf":
+            return _process_pdf(file_path)
+        elif ext == ".docx":
+            return _process_docx(file_path)
+        elif ext in [".txt", ".md"]:
+            return _process_plain_text(file_path)
+        else:
+            logger.warning(f"Unsupported file type: {ext}")
+            return []
+    except Exception as e:
+        logger.error(f"Error extracting text from {file_path}: {e}")
+        return []
+
+
+def _process_pdf(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Xử lý PDF: Tự động phát hiện PDF văn bản hay PDF scan.
+    """
+    # 1. Thử trích xuất bằng pypdf (nhanh)
+    extracted_pages = _extract_pdf_text_pypdf(file_path)
+
+    # 2. Tính toán mật độ văn bản để phát hiện scan
+    total_chars = sum(len(p["text"].strip()) for p in extracted_pages)
+    num_pages = len(extracted_pages) if extracted_pages else 1
+    avg_chars = total_chars / num_pages
+
+    # 3. Nếu mật độ văn bản quá thấp, chuyển sang chế độ OCR
+    if avg_chars < TEXT_DENSITY_THRESHOLD:
+        logger.info(f"PDF density low ({avg_chars:.2f} chars/page). Switching to OCR mode.")
+        return _extract_pdf_ocr(file_path)
+    
+    logger.info("PDF text extraction successful using pypdf.")
+    return extracted_pages
+
+
+def _extract_pdf_text_pypdf(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Trích xuất text từ PDF dạng text-based bằng pypdf.
+    """
+    results = []
+    try:
         reader = PdfReader(file_path)
-        return "\n".join(
-            page.extract_text() or ""
-            for page in reader.pages
-        )
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            results.append({
+                "page": i + 1,
+                "text": text,
+                "source": "pypdf"
+            })
+    except Exception as e:
+        logger.error(f"pypdf extraction failed: {e}")
+        # Trả về list rỗng để logic chính quyết định fallback hoặc dừng
+        return []
+    
+    return results
 
-    if ext in [".docx"]:
+
+def _extract_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Trích xuất text từ PDF dạng scan bằng cách chuyển sang ảnh và dùng PaddleOCR.
+    """
+    results = []
+    try:
+        # Chuyển PDF thành danh sách ảnh (PIL Images)
+        # Lưu ý: poppler phải được cài đặt trong môi trường (docker/system)
+        images = convert_from_path(file_path)
+        
+        for i, image in enumerate(images):
+            # Gọi hàm ocr_image từ module ocr.py có sẵn
+            text = ocr_image(image) or ""
+            
+            results.append({
+                "page": i + 1,
+                "text": text,
+                "source": "paddle_ocr"
+            })
+            
+    except Exception as e:
+        logger.error(f"OCR extraction failed: {e}")
+        # Nếu lỗi convert ảnh hoặc OCR, trả về list rỗng hoặc lỗi cục bộ
+        return []
+
+    return results
+
+
+def _process_docx(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Xử lý file DOCX.
+    DOCX không có khái niệm 'trang' cứng như PDF, ta gộp toàn bộ vào page 1 
+    hoặc có thể tách theo section nếu cần thiết sau này.
+    """
+    try:
         doc = DocxDocument(file_path)
-        return "\n".join(p.text for p in doc.paragraphs)
+        full_text = "\n".join([p.text for p in doc.paragraphs])
+        return [{
+            "page": 1,
+            "text": full_text,
+            "source": "docx"
+        }]
+    except Exception as e:
+        logger.error(f"DOCX extraction failed: {e}")
+        return []
 
-    if ext in [".txt"]:
-        with open(file_path, encoding="utf-8", errors="ignore") as f:
-            return f.read()
 
-    raise ValueError(f"Unsupported file type: {ext}")
-
-====================
+def _process_plain_text(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Xử lý file TXT/MD.
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        return [{
+            "page": 1,
+            "text": content,
+            "source": "text"
+        }]
+    except Exception as e:
+        logger.error(f"Text file extraction failed: {e}")
+        return []
+==============================
 FILE: .\backend\vectorstore\bm25_store.py
-====================
+==============================
 import pickle
 from pathlib import Path
 from typing import List, Tuple
@@ -3875,9 +2199,9 @@ class BM25Store:
                 instance.corpus = loaded_data.corpus
                 instance.bm25 = loaded_data.bm25
         return instance
-====================
+==============================
 FILE: .\backend\vectorstore\faiss_store.py
-====================
+==============================
 import os
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -3899,2274 +2223,58 @@ def get_faiss_store(index_path: str):
             allow_dangerous_deserialization=True
         )
     return None
-====================
-FILE: .\frontend\index.html
-====================
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>AI Trợ Giảng</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-
-====================
-FILE: .\frontend\vite.config.js
-====================
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 5173
-  }
-});
-
-====================
-FILE: .\frontend\src\api.js
-====================
-import axios from "axios";
-
-export const api = axios.create({
-  baseURL: "http://127.0.0.1:8000"
-});
-
-export function setToken(token) {
-  api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-}
-
-====================
-FILE: .\frontend\src\App.jsx
-====================
-import { useState } from "react";
-import { api, setToken } from "./api";
-import ChatBox from "./components/ChatBox";
-
-export default function App() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState(null);
-  const [file, setFile] = useState(null);
-
-  async function login() {
-    const res = await api.post("/auth/login", {
-      username,
-      password,
-    });
-
-    setToken(res.data.access_token);
-    setRole(res.data.role);
-
-    alert("Login thành công với role: " + res.data.role);
-  }
-
-  async function upload() {
-    const form = new FormData();
-    form.append("file", file);
-
-    await api.post("/upload/", form);
-    alert("Upload & ingest xong");
-  }
-
-  return (
-    <div style={{ padding: 30, fontFamily: "Arial" }}>
-      <h2>AI Trợ Giảng</h2>
-
-      {/* LOGIN */}
-      <h3>Login</h3>
-      <input
-        placeholder="username"
-        onChange={(e) => setUsername(e.target.value)}
-      />
-      <br />
-      <input
-        type="password"
-        placeholder="password"
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      <br />
-      <button onClick={login}>Login</button>
-
-      {/* UPLOAD – TEACHER ONLY */}
-      {role === "teacher" && (
-        <>
-          <h3>Upload tài liệu (GV)</h3>
-          <input
-            type="file"
-            onChange={(e) => setFile(e.target.files[0])}
-          />
-          <br />
-          <button onClick={upload}>Upload</button>
-        </>
-      )}
-
-      <hr />
-
-      {/* CHAT – DÙNG CHATBOX PHASE 3 */}
-      <ChatBox />
-    </div>
-  );
-}
-
-====================
-FILE: .\frontend\src\main.jsx
-====================
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-
-====================
-FILE: .\frontend\src\components\ChatBox.jsx
-====================
-import { useState } from "react";
-
-export default function ChatBox() {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [sources, setSources] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  const ask = async () => {
-    if (!question.trim()) return;
-    setLoading(true);
-    try {
-      // FIX: URL phải khớp với router backend (main.py định nghĩa prefix="/chat") [cite: 5]
-      const res = await fetch("http://localhost:8000/chat/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          question,
-          course_id: "ML101" // MVP: Fix cứng hoặc lấy từ state khóa học
-        }),
-      });
-      const data = await res.json();
-      setAnswer(data.answer);
-      setSources(data.sources || []);
-    } catch (err) {
-      console.error("Lỗi:", err);
-      setAnswer("Không thể kết nối đến server.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={{ maxWidth: 800, margin: "40px auto", padding: "20px", border: "1px solid #ddd" }}>
-      <h3>Hỏi đáp tài liệu</h3>
-      <textarea
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        rows={3}
-        style={{ width: "100%", padding: "10px" }}
-        placeholder="Nhập câu hỏi về bài học..."
-      />
-      <button onClick={ask} disabled={loading} style={{ marginTop: 10, padding: "10px 20px" }}>
-        {loading ? "Đang suy nghĩ..." : "Gửi câu hỏi"}
-      </button>
-
-      {answer && (
-        <div style={{ marginTop: 20, backgroundColor: "#f9f9f9", padding: "15px" }}>
-          <strong>Trợ giảng AI:</strong>
-          <p style={{ whiteSpace: "pre-wrap" }}>{answer}</p>
-          
-          {sources.length > 0 && (
-            <div style={{ marginTop: 15, borderTop: "1px solid #eee", paddingTop: "10px" }}>
-              <small>Nguồn tham khảo:</small>
-              <ul style={{ fontSize: "0.85em" }}>
-                {sources.map((s, idx) => (
-                  <li key={idx}>
-                    {s.source_file} {s.page ? `- Trang ${s.page}` : ""} 
-                    <details>
-                      <summary>Xem trích đoạn</summary>
-                      <i>"...{s.content.substring(0, 200)}..."</i>
-                    </details>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-====================
-FILE: .\frontend\src\components\FileUpload.jsx
-====================
-import React, { useState } from "react";
-import axios from "axios";
-
-function FileUpload() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [courseId, setCourseId] = useState("ML101");
-  const [loading, setLoading] = useState(false);
-
-  const handleFileChange = (e) => {
-    setSelectedFile(e.target.files[0]);
-  };
-
-  const handleUpload = async () => {
-    if (!selectedFile) {
-      alert("Vui lòng chọn một file!");
-      return;
-    }
-
-    setLoading(true);
-    const formData = new FormData();
-    // Quan trọng: Tên 'file' phải khớp với backend
-    formData.append("file", selectedFile);
-
-    try {
-      const response = await axios.post(
-        `http://localhost:8000/upload/?course_id=${courseId}`,
-        formData,
-        {
-          headers: { "Content-Type": "multipart/form-data" },
-        }
-      );
-      alert("Upload thành công: " + response.data.message);
-    } catch (error) {
-      console.error("Lỗi upload:", error);
-      alert("Lỗi upload: " + (error.response?.data?.detail || "Không rõ lỗi"));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={{ padding: "20px", border: "1px solid #ccc", marginBottom: "20px" }}>
-      <h3>Upload Tài Liệu (GV)</h3>
-      <input
-        type="text"
-        placeholder="Course ID (vd: ML101)"
-        value={courseId}
-        onChange={(e) => setCourseId(e.target.value)}
-      />
-      <br /><br />
-      <input type="file" onChange={handleFileChange} accept=".txt" />
-      <button onClick={handleUpload} disabled={loading}>
-        {loading ? "Đang xử lý..." : "Tải lên & Ingest"}
-      </button>
-    </div>
-  );
-}
-
-export default FileUpload;
-====================
-FILE: .\tests\conftest.py
-====================
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-====================
-FILE: .\tests\test_eval.py
-====================
-from backend.eval.runner import run_evaluation
-
-def test_eval_pipeline_runs():
-    results = run_evaluation()
-    assert isinstance(results, list)
-    assert len(results) > 0
-    assert "score" in results[0]
-
-====================
-FILE: .\tests\test_eval_pipeline.py
-====================
-from backend.eval.runner import run_evaluation
-
-def test_eval_runs():
-    results = run_evaluation()
-    assert isinstance(results, list)
-    assert "grounded" in results[0]
-
-====================
-FILE: .\tests\test_guardrails.py
-====================
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.agent.qa import answer_question
-
-def test_empty_query():
-    assert hybrid_search("") == []
-
-def test_short_query():
-    assert hybrid_search("hi") == []
-
-def test_out_of_scope_question():
-    result = answer_question("Thủ đô của Pháp là gì?")
-    assert "không tìm thấy" in result["answer"].lower() \
-        or "vượt ngoài phạm vi" in result["answer"].lower()
-
-====================
-FILE: .\tests\test_rag_guardrail.py
-====================
-from backend.agent.qa import answer_question
-
-def test_out_of_scope():
-    r = answer_question("Ai là tổng thống Mỹ?")
-    assert "không tìm thấy" in r["answer"].lower() \
-        or "vượt ngoài phạm vi" in r["answer"].lower()
-
 ==============================
-FILE: .\data\raw_docs\83dee78d344649c393659de375ce52e0.txt
-==============================
-Học máy là một lĩnh vực của trí tuệ nhân tạo.
-
-==============================
-FILE: .\data\raw_docs\project_export.txt
-==============================
-
-==============================
-FILE: D:\ai-tro-giang\.pytest_cache\README.md
-==============================
-
-# pytest cache directory #
-
-This directory contains data from the pytest's cache plugin,
-which provides the `--lf` and `--ff` options, as well as the `cache` fixture.
-
-**Do not** commit this to version control.
-
-See [the docs](https://docs.pytest.org/en/stable/how-to/cache.html) for more information.
-
-==============================
-FILE: D:\ai-tro-giang\backend\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\agent\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\agent\prompt.py
-==============================
-
-SYSTEM_PROMPT = """
-B?n l AI tr? gi?ng h?c thu?t.
-
-Quy t?c b?t bu?c:
-- Ch? tr? l?i d?a trn n?i dung ti li?u du?c cung c?p.
-- N?u khng tm th?y thng tin trong ti li?u, hy tr? l?i: 
-  "Ti khng tm th?y thng tin trong ti li?u."
-- Khng du?c suy don ho?c b?a.
-- Tr? l?i ng?n g?n, dng tr?ng tm.
-"""
-
-==============================
-FILE: D:\ai-tro-giang\backend\agent\qa.py
-==============================
-
-from typing import Dict, Any, List, Tuple
-from langchain_core.documents import Document
-
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import get_llm
-from backend.utils.citation import format_apa, format_ieee
-
-
-TOP_K = 5
-HYBRID_THRESHOLD = 0.15
-
-WATERMARK = (
-    "\n\n AI Tr? Gi?ng\n"
-    "N?i dung ny du?c t?o t? d?ng d?a trn ti li?u h?c t?p n?i b?. "
-    "Khng thay th? ti li?u chnh th?c."
-)
-
-
-def answer_question(question: str) -> Dict[str, Any]:
-    """
-    Answer question using Hybrid Search with strict academic guardrails.
-
-    Guardrails:
-    - No retrieval ? refuse
-    - Low-score retrieval ? refuse
-    - LLM is NEVER called without grounded context
-    """
-
-    # === BASIC INPUT CHECK ===
-    if not question or len(question.strip()) < 5:
-        return {
-            "answer": "Cu h?i khng h?p l? ho?c qu ng?n.",
-            "sources": [],
-            "citations": {"apa": [], "ieee": []}
-        }
-
-    # === RETRIEVAL ===
-    results: List[Tuple[Document, float]] = hybrid_search(question)
-
-    # === GUARD 1: NO DOCUMENT FOUND ===
-    if not results:
-        return {
-            "answer": "Ti khng tm th?y thng tin trong ti li?u d du?c cung c?p.",
-            "sources": [],
-            "citations": {"apa": [], "ieee": []}
-        }
-
-    # === APPLY THRESHOLD ===
-    filtered: List[Tuple[Document, float]] = [
-        (doc, score)
-        for doc, score in results[:TOP_K]
-        if score >= HYBRID_THRESHOLD
-    ]
-
-    # === GUARD 2: OUT-OF-SCOPE QUESTION ===
-    if not filtered:
-        return {
-            "answer": (
-                "Cu h?i ny vu?t ngoi ph?m vi cc ti li?u hi?n c. "
-                "Ti khng d? can c? h?c thu?t d? tr? l?i."
-            ),
-            "sources": [],
-            "citations": {"apa": [], "ieee": []}
-        }
-
-    # === BUILD CONTEXT & SOURCES ===
-    sources = []
-    context_parts = []
-
-    for idx, (doc, score) in enumerate(filtered):
-        sources.append({
-            "source_file": doc.metadata.get("source_file"),
-            "page": doc.metadata.get("page"),
-            "section": doc.metadata.get("section"),
-            "chunk_id": doc.metadata.get("chunk_id"),
-            "score": round(score, 4),
-            "preview": doc.page_content[:200]
-        })
-
-        context_parts.append(
-            f"[CHUNK_{doc.metadata.get('chunk_id')}]\n{doc.page_content}"
-        )
-
-    context = "\n\n".join(context_parts)
-
-    # === PROMPT (STRICT GROUNDED) ===
-    prompt = f"""
-B?n l AI Tr? Gi?ng h?c thu?t.
-
-CH? s? d?ng thng tin trong cc CHUNK bn du?i.
-M?i  tr? l?i PH?I k?t thc b?ng tag [CHUNK_x] tuong ?ng.
-N?u khng d? thng tin ? t? ch?i tr? l?i.
-
-TI LI?U:
-{context}
-
-CU H?I:
-{question}
-
-TR? L?I:
-"""
-
-    # === CALL LLM (SAFE POINT) ===
-    llm = get_llm()
-    answer = llm.invoke(prompt).strip() + WATERMARK
-
-    citations = {
-        "apa": [format_apa(s) for s in sources],
-        "ieee": [format_ieee(s, i + 1) for i, s in enumerate(sources)]
-    }
-
-    return {
-        "answer": answer,
-        "sources": sources,
-        "citations": citations
-    }
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\auth.py
-==============================
-
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/auth", tags=["Auth"])
-
-@router.post(
-    "/login",
-    operation_id="auth_login"
-)
-def login(username: str, password: str):
-    return {"status": "ok"}
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\chat.py
-==============================
-
-from fastapi import APIRouter
-from backend.agent.qa import answer_question
-
-router = APIRouter(prefix="/chat", tags=["Chat"])
-
-@router.post(
-    "/",
-    operation_id="chat_answer_question"
-)
-def chat(question: str):
-    return answer_question(question)
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\courses.py
-==============================
-
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/courses", tags=["Courses"])
-
-@router.get(
-    "/",
-    operation_id="courses_list"
-)
-def list_courses():
-    return []
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\eval.py
-==============================
-
-from fastapi import APIRouter
-from backend.eval.runner import run_evaluation
-
-router = APIRouter(prefix="/eval", tags=["Eval"])
-
-@router.post(
-    "/run",
-    operation_id="eval_run"
-)
-def run_eval():
-    return run_evaluation()
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\pedagogy.py
-==============================
-
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/pedagogy", tags=["Pedagogy"])
-
-@router.post(
-    "/generate",
-    operation_id="pedagogy_generate"
-)
-def generate():
-    return {"status": "ok"}
-
-==============================
-FILE: D:\ai-tro-giang\backend\api\upload.py
-==============================
-
-import os
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from backend.rag.ingest import ingest_document
-
-router = APIRouter()
-
-# Thu m?c luu tr? file
-UPLOAD_DIR = "data/raw_docs"
-
-@router.post("/")
-async def upload_document(course_id: str, file: UploadFile = File(...)):
-    # 1. T?o thu m?c n?u chua t?n t?i
-    if not os.path.exists(UPLOAD_DIR):
-        os.makedirs(UPLOAD_DIR)
-
-    # 2. Ki?m tra d?nh d?ng file (ch? nh?n .txt trong b?n hi?n t?i)
-    if not file.filename.endswith('.txt'):
-        raise HTTPException(status_code=400, detail="Ch? h? tr? file .txt")
-
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    
-    try:
-        # 3. Luu file vo ? dia
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        # 4. Ingest vo Vector Database
-        ingest_document(file_path, course_id)
-
-        return {"message": f" upload v x? l file {file.filename} thnh cng cho kha h?c {course_id}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-==============================
-FILE: D:\ai-tro-giang\backend\auth\deps.py
-==============================
-
-from backend.auth.roles import UserRole
-
-def get_current_user():
-    # MVP gi? l?p, sau ny n?i JWT
-    return {
-        "id": "demo_user",
-        "role": UserRole.TEACHER
-    }
-
-==============================
-FILE: D:\ai-tro-giang\backend\auth\roles.py
-==============================
-
-from enum import Enum
-
-class UserRole(str, Enum):
-    STUDENT = "student"
-    TEACHER = "teacher"
-
-==============================
-FILE: D:\ai-tro-giang\backend\auth\security.py
-==============================
-
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
-
-SECRET_KEY = "CHANGE_ME_SECRET"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
-
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def verify_token(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except JWTError:
-        return None
-
-==============================
-FILE: D:\ai-tro-giang\backend\auth\users.py
-==============================
-
-# backend/auth/users.py
-
-from passlib.context import CryptContext
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-def verify_password(plain, hashed):
-    return pwd_context.verify(plain, hashed)
-
-# Hash s?n (t?o 1 l?n r?i hardcode)
-USERS_DB = {
-    "teacher1": {
-        "username": "teacher1",
-        "password": "$2b$12$6b8KJ7u9yM3mY8qY1bQ3KOUxM8Y1zA0k9Ff5M9XqZxQxJw5s5Oe9a",  # 123456
-        "role": "teacher"
-    },
-    "student1": {
-        "username": "student1",
-        "password": "$2b$12$6b8KJ7u9yM3mY8qY1bQ3KOUxM8Y1zA0k9Ff5M9XqZxQxJw5s5Oe9a",  # 123456
-        "role": "student"
-    }
-}
-
-def authenticate(username: str, password: str):
-    user = USERS_DB.get(username)
-    if not user:
-        return None
-    if not verify_password(password, user["password"]):
-        return None
-    return user
-
-==============================
-FILE: D:\ai-tro-giang\backend\courses\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\courses\access.py
-==============================
-
-def check_course_access(user, course):
-    if user["role"] == "teacher":
-        return course.owner_id == user["id"]
-    if user["role"] == "student":
-        # MVP: cho php t?t c? SV (sau ny g?n class)
-        return True
-    return False
-
-==============================
-FILE: D:\ai-tro-giang\backend\courses\models.py
-==============================
-
-from dataclasses import dataclass
-
-@dataclass
-class Course:
-    course_id: str
-    name: str
-    owner_id: str  # gi?ng vin
-
-==============================
-FILE: D:\ai-tro-giang\backend\courses\service.py
-==============================
-
-from backend.courses.models import Course
-
-# MVP: in-memory, sau ny thay DB
-COURSES = {}
-
-def create_course(course_id: str, name: str, owner_id: str):
-    course = Course(course_id, name, owner_id)
-    COURSES[course_id] = course
-    return course
-
-def get_course(course_id: str):
-    return COURSES.get(course_id)
-
-def list_courses_by_owner(owner_id: str):
-    return [c for c in COURSES.values() if c.owner_id == owner_id]
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\datasets.py
-==============================
-
-from dataclasses import dataclass
-from typing import List
-
-@dataclass
-class EvalSample:
-    id: int
-    question: str
-    expected_answer: str | None = None
-
-EVAL_DATASET: List[EvalSample] = [
-    EvalSample(
-        id=1,
-        question="FAISS l g trong h? th?ng RAG?"
-    ),
-    EvalSample(
-        id=2,
-        question="BM25 dng d? lm g?"
-    ),
-]
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\evaluator.py
-==============================
-
-from backend.rag.hybrid_retriever import hybrid_search
-
-MIN_RETRIEVAL_SCORE = 0.15
-
-def evaluate_sample(sample: dict) -> dict:
-    """
-    sample = {
-        id: int,
-        question: str
-    }
-    """
-
-    question = sample.get("question")
-    if not question:
-        raise ValueError("Missing question in eval sample")
-
-    results = hybrid_search(question)
-
-    grounded = False
-    used_chunks = []
-
-    for doc, score in results:
-        if score >= MIN_RETRIEVAL_SCORE:
-            grounded = True
-            used_chunks.append({
-                "chunk_id": doc.metadata.get("chunk_id"),
-                "source_file": doc.metadata.get("source_file"),
-                "score": round(score, 4)
-            })
-
-    return {
-        "id": sample.get("id"),
-        "question": question,
-        "grounded": grounded,
-        "num_chunks": len(used_chunks),
-        "chunks": used_chunks,
-        "score": 1.0 if grounded else 0.0
-    }
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\faithfulness.py
-==============================
-
-import re
-from typing import Dict, Any, List
-
-
-STOPWORDS = {
-    "l", "v", "c?a", "trong", "cho", "v?i", "m?t", "cc",
-    "du?c", "khi", "ny", "d", "nhu", "d?"
-}
-
-
-def normalize(text: str) -> List[str]:
-    """
-    Normalize text into keyword tokens
-    """
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9-?\s]", " ", text)
-    tokens = text.split()
-    return [t for t in tokens if t not in STOPWORDS and len(t) > 2]
-
-
-def extract_claim_sentences(answer: str) -> List[str]:
-    """
-    Split answer into claim sentences (remove chunk tags)
-    """
-    clean = re.sub(r"\[CHUNK_\d+\]", "", answer)
-    sentences = re.split(r"[.\n]", clean)
-    return [s.strip() for s in sentences if len(s.strip()) > 20]
-
-
-def check_faithfulness(
-    answer: str,
-    contexts: List[str],
-    min_overlap_ratio: float = 0.3
-) -> Dict[str, Any]:
-    """
-    Faithfulness check:
-    - Each claim sentence must overlap sufficiently with context keywords
-    """
-
-    context_text = " ".join(contexts)
-    context_tokens = set(normalize(context_text))
-
-    claims = extract_claim_sentences(answer)
-
-    if not claims:
-        return {
-            "faithful": False,
-            "reason": "NO_CLAIM_SENTENCE",
-            "details": "No valid claim sentence found in answer."
-        }
-
-    unfaithful_claims = []
-
-    for claim in claims:
-        claim_tokens = normalize(claim)
-
-        if not claim_tokens:
-            continue
-
-        overlap = set(claim_tokens) & context_tokens
-        overlap_ratio = len(overlap) / len(set(claim_tokens))
-
-        if overlap_ratio < min_overlap_ratio:
-            unfaithful_claims.append({
-                "claim": claim,
-                "overlap_ratio": round(overlap_ratio, 2)
-            })
-
-    if unfaithful_claims:
-        return {
-            "faithful": False,
-            "reason": "LOW_CONTEXT_OVERLAP",
-            "details": unfaithful_claims
-        }
-
-    return {
-        "faithful": True,
-        "reason": "OK",
-        "details": "All claims sufficiently supported by context."
-    }
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\groundedness.py
-==============================
-
-import re
-from typing import Dict, Any, List
-
-
-CHUNK_PATTERN = re.compile(r"\[CHUNK_(\d+)\]")
-
-
-def extract_chunk_ids(answer: str) -> List[int]:
-    """
-    Extract chunk indices from answer text.
-    Example: [CHUNK_0], [CHUNK_2] ? [0, 2]
-    """
-    return [int(x) for x in CHUNK_PATTERN.findall(answer)]
-
-
-def check_groundedness(
-    answer: str,
-    sources: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Groundedness check:
-    - Answer must contain chunk tags
-    - Chunk tags must exist in retrieved sources
-    """
-
-    chunk_ids_in_answer = extract_chunk_ids(answer)
-
-    if not chunk_ids_in_answer:
-        return {
-            "grounded": False,
-            "reason": "NO_CHUNK_TAG",
-            "details": "Answer does not contain any [CHUNK_x] tags."
-        }
-
-    valid_chunk_ids = {
-        src.get("chunk_id") for src in sources
-    }
-
-    invalid_refs = [
-        cid for cid in chunk_ids_in_answer
-        if cid not in valid_chunk_ids
-    ]
-
-    if invalid_refs:
-        return {
-            "grounded": False,
-            "reason": "INVALID_CHUNK_REFERENCE",
-            "details": f"Referenced chunk(s) not in sources: {invalid_refs}"
-        }
-
-    return {
-        "grounded": True,
-        "reason": "OK",
-        "details": f"All referenced chunks are valid: {chunk_ids_in_answer}"
-    }
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\metrics.py
-==============================
-
-def groundedness_score(sources, expected_sources):
-    if not sources:
-        return 0.0
-
-    matched = 0
-    for src in sources:
-        source_file = src.get("source_file", "")
-        if any(exp in source_file for exp in expected_sources):
-            matched += 1
-
-    return matched / len(expected_sources)
-
-
-def citation_coverage(sources):
-    if not sources:
-        return 0.0
-
-    cited = [s for s in sources if s.get("page") is not None]
-    return len(cited) / len(sources)
-
-
-def hallucination_flag(sources):
-    return len(sources) == 0
-
-==============================
-FILE: D:\ai-tro-giang\backend\eval\runner.py
-==============================
-
-from backend.eval.datasets import EVAL_DATASET
-from backend.eval.evaluator import evaluate_sample
-from backend.logging.audit import audit_log
-
-def run_evaluation():
-    results = []
-
-    for sample in EVAL_DATASET:
-        result = evaluate_sample({
-            "id": sample.id,
-            "question": sample.question
-        })
-
-        results.append(result)
-
-        audit_log(
-            user="system_eval",
-            action="evaluation_run",
-            payload=result
-        )
-
-    return results
-
-==============================
-FILE: D:\ai-tro-giang\backend\guardrails\citation.py
-==============================
-
-def format_citations(source_documents):
-    citations = []
-    for doc in source_documents:
-        meta = doc.metadata
-        citations.append({
-            "source": meta.get("source", "unknown"),
-            "page": meta.get("page", None)
-        })
-    return citations
-
-==============================
-FILE: D:\ai-tro-giang\backend\guardrails\grounding.py
-==============================
-
-from typing import List
-
-MIN_DOCS_REQUIRED = 1
-
-def check_grounding(source_documents: List):
-    if not source_documents or len(source_documents) < MIN_DOCS_REQUIRED:
-        raise ValueError(
-            "Khng tm th?y ti li?u lin quan. "
-            "H? th?ng khng th? tr? l?i d? trnh sai l?ch h?c thu?t."
-        )
-
-==============================
-FILE: D:\ai-tro-giang\backend\guardrails\rate_limit.py
-==============================
-
-import time
-
-REQUEST_LIMIT = 20
-WINDOW_SECONDS = 60
-
-_user_requests = {}
-
-def check_rate_limit(user_id: str):
-    now = time.time()
-    timestamps = _user_requests.get(user_id, [])
-
-    timestamps = [t for t in timestamps if now - t < WINDOW_SECONDS]
-
-    if len(timestamps) >= REQUEST_LIMIT:
-        raise ValueError("B?n g?i qu nhi?u yu c?u. Vui lng th? l?i sau.")
-
-    timestamps.append(now)
-    _user_requests[user_id] = timestamps
-
-==============================
-FILE: D:\ai-tro-giang\backend\llm\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\llm\llm.py
-==============================
-
-import os
-try:
-    from google import genai
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
-
-class GeminiLLM:
-    def __init__(self, api_key: str):
-        self.client = None
-        if HAS_GENAI and api_key:
-            # S? d?ng thu vi?n google-genai m?i nh?t
-            self.client = genai.Client(api_key=api_key)
-            self.model_id = "gemini-1.5-flash"
-        
-    def generate(self, prompt: str) -> str:
-        if not self.client:
-            return "H? th?ng dang ch?y Offline ho?c thi?u API Key. (Vui lng c?u hnh l?i llm.py)"
-        
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_id,
-                contents=prompt
-            )
-            return response.text
-        except Exception as e:
-            return f"L?i Gemini API: {str(e)}"
-
-# --- C?U HNH ---
-# 1. N?u mu?n dng th?t: Dn key vo dy
-MY_API_KEY = "" 
-
-# 2. Kh?i t?o instance
-if MY_API_KEY:
-    llm_instance = GeminiLLM(api_key=MY_API_KEY)
-else:
-    # N?u khng c key, tr? v? class gi? l?p d? khng l?i h? th?ng
-    class OfflineLLM:
-        def generate(self, prompt: str):
-            return "AI Tr? Gi?ng (Offline): Ti li?u d du?c tm th?y nhung c?n API Key d? tm t?t cu tr? l?i."
-    llm_instance = OfflineLLM()
-
-def get_llm():
-    return llm_instance
-
-==============================
-FILE: D:\ai-tro-giang\backend\logging\audit.py
-==============================
-
-import json
-import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import List
-
-LOG_PATH = Path("data/audit.log")
-
-def audit_log(
-    user: str,
-    action: str,
-    payload: dict,
-    course_id: str | None = None,
-    chunk_ids: List[str] | None = None,
-    model_name: str | None = None,
-    request_id: str | None = None
-):
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    record = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "request_id": request_id or str(uuid.uuid4()),
-        "user": user,
-        "action": action,
-        "course_id": course_id,
-        "chunk_ids": chunk_ids or [],
-        "model": model_name or "offline_stub",
-        "payload": payload,
-        "schema": "academic_audit_v3"
-    }
-
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-==============================
-FILE: D:\ai-tro-giang\backend\main.py
-==============================
-
-from fastapi import FastAPI
-
-from backend.api.chat import router as chat_router
-from backend.api.upload import router as upload_router
-from backend.api.auth import router as auth_router
-from backend.api.pedagogy import router as pedagogy_router
-from backend.api.eval import router as eval_router
-from backend.api.courses import router as courses_router
-
-app = FastAPI(title="AI Tr? Gi?ng")
-
-app.include_router(auth_router)
-app.include_router(upload_router)
-app.include_router(chat_router)
-app.include_router(pedagogy_router)
-app.include_router(eval_router)
-app.include_router(courses_router)
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\bloom.py
-==============================
-
-from enum import Enum
-from typing import List
-
-
-class BloomLevel(str, Enum):
-    """
-    Bloom's Taxonomy  Cognitive Domain
-    """
-
-    REMEMBER = "remember"
-    UNDERSTAND = "understand"
-    APPLY = "apply"
-    ANALYZE = "analyze"
-    EVALUATE = "evaluate"
-    CREATE = "create"
-
-    @property
-    def description(self) -> str:
-        return {
-            self.REMEMBER: "Nh? l?i thng tin, d?nh nghia, thu?t ng?",
-            self.UNDERSTAND: "Gi?i thch, m t?, di?n gi?i  nghia",
-            self.APPLY: "p d?ng ki?n th?c vo bi ton c? th?",
-            self.ANALYZE: "Phn tch, so snh, ch? ra m?i quan h?",
-            self.EVALUATE: "nh gi, nh?n xt, ph?n bi?n",
-            self.CREATE: "T?ng h?p, thi?t k?, xy d?ng m?i"
-        }[self]
-
-    @property
-    def action_verbs(self) -> List[str]:
-        """
-        G?i  d?ng t? dng trong cu h?i / bi t?p
-        """
-        return {
-            self.REMEMBER: ["li?t k", "nu", "d?nh nghia", "k? tn"],
-            self.UNDERSTAND: ["gi?i thch", "trnh by", "m t?", "tm t?t"],
-            self.APPLY: ["p d?ng", "tnh ton", "gi?i", "th?c hi?n"],
-            self.ANALYZE: ["phn tch", "so snh", "phn lo?i", "lm r"],
-            self.EVALUATE: ["dnh gi", "nh?n xt", "ph?n bi?n", "so snh uu nhu?c di?m"],
-            self.CREATE: ["thi?t k?", "xy d?ng", "d? xu?t", "pht tri?n"]
-        }[self]
-
-    @classmethod
-    def ordered_levels(cls) -> List["BloomLevel"]:
-        """
-        Tr? v? Bloom levels theo th? t? tang d?n d? kh
-        """
-        return [
-            cls.REMEMBER,
-            cls.UNDERSTAND,
-            cls.APPLY,
-            cls.ANALYZE,
-            cls.EVALUATE,
-            cls.CREATE
-        ]
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\generator.py
-==============================
-
-import json
-from typing import Dict, Any, List
-
-from backend.pedagogy.bloom import BloomLevel
-from backend.pedagogy.prompts import (
-    build_question_prompt,
-    build_assignment_prompt
-)
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import get_llm
-
-
-CONTEXT_TOP_K = 5
-
-
-def retrieve_context(query: str) -> str:
-    """
-    Retrieve learning context using Hybrid Search
-    """
-    results = hybrid_search(query)
-    contexts = []
-
-    for doc, score in results[:CONTEXT_TOP_K]:
-        contexts.append(doc.page_content)
-
-    return "\n\n".join(contexts)
-
-
-def _invoke_llm(prompt: str) -> List[Dict[str, Any]]:
-    """
-    Invoke LLM and parse JSON output safely
-    """
-    llm = get_llm()
-    raw = llm.invoke(prompt)
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError(
-            "LLM output is not valid JSON. "
-            "Please refine prompt or model configuration."
-        )
-
-
-def generate_questions(
-    topic: str,
-    bloom: BloomLevel,
-    num_items: int = 3
-) -> List[Dict[str, Any]]:
-    """
-    Generate pedagogical questions based on Bloom level
-    """
-
-    context = retrieve_context(topic)
-
-    if not context.strip():
-        raise ValueError("No relevant learning material found.")
-
-    prompt = build_question_prompt(
-        context=context,
-        bloom=bloom,
-        num_items=num_items
-    )
-
-    return _invoke_llm(prompt)
-
-
-def generate_assignments(
-    topic: str,
-    bloom: BloomLevel,
-    num_items: int = 2
-) -> List[Dict[str, Any]]:
-    """
-    Generate pedagogical assignments based on Bloom level
-    """
-
-    context = retrieve_context(topic)
-
-    if not context.strip():
-        raise ValueError("No relevant learning material found.")
-
-    prompt = build_assignment_prompt(
-        context=context,
-        bloom=bloom,
-        num_items=num_items
-    )
-
-    return _invoke_llm(prompt)
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\prompts.py
-==============================
-
-from backend.pedagogy.bloom import BloomLevel
-
-
-QUESTION_PROMPT_TEMPLATE = """
-B?n l AI Tr? Gi?ng.
-
-NHI?M V?:
-Sinh {num_items} CU H?I h?c t?p theo m?c d? Bloom: {bloom_level}
-
-M T? M?C ?:
-{bloom_description}
-
-YU C?U B?T BU?C:
-- CH? s? d?ng thng tin trong TI LI?U bn du?i
-- Khng suy don, khng thm ki?n th?c bn ngoi
-- M?i cu h?i ph?i bm st n?i dung ti li?u
-- M?c d? nh?n th?c ph?i dng Bloom level
-- Khng trng l?p cu h?i
-
-TI LI?U:
-{context}
-
-?NH D?NG TR? V? (JSON):
-[
-  {{
-    "question": "...",
-    "bloom_level": "{bloom_level}",
-    "learning_objective": "...",
-    "difficulty": "easy | medium | hard"
-  }}
-]
-"""
-
-
-ASSIGNMENT_PROMPT_TEMPLATE = """
-B?n l AI Tr? Gi?ng.
-
-NHI?M V?:
-Sinh {num_items} BI T?P h?c t?p theo m?c d? Bloom: {bloom_level}
-
-M T? M?C ?:
-{bloom_description}
-
-YU C?U B?T BU?C:
-- CH? s? d?ng thng tin trong TI LI?U bn du?i
-- Khng suy don, khng thm ki?n th?c bn ngoi
-- Bi t?p ph?i yu c?u ngu?i h?c v?n d?ng dng m?c Bloom
-- C m t? r yu c?u d?u ra
-
-TI LI?U:
-{context}
-
-?NH D?NG TR? V? (JSON):
-[
-  {{
-    "title": "...",
-    "task": "...",
-    "expected_output": "...",
-    "bloom_level": "{bloom_level}",
-    "difficulty": "easy | medium | hard"
-  }}
-]
-"""
-
-
-def build_question_prompt(
-    context: str,
-    bloom: BloomLevel,
-    num_items: int = 3
-) -> str:
-    return QUESTION_PROMPT_TEMPLATE.format(
-        num_items=num_items,
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-
-def build_assignment_prompt(
-    context: str,
-    bloom: BloomLevel,
-    num_items: int = 2
-) -> str:
-    return ASSIGNMENT_PROMPT_TEMPLATE.format(
-        num_items=num_items,
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\rubric.py
-==============================
-
-import json
-from typing import List, Dict, Any
-
-from backend.pedagogy.bloom import BloomLevel
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import get_llm
-
-
-CONTEXT_TOP_K = 5
-
-
-def retrieve_context(topic: str) -> str:
-    results = hybrid_search(topic)
-    contexts = []
-
-    for doc, _ in results[:CONTEXT_TOP_K]:
-        contexts.append(doc.page_content)
-
-    return "\n\n".join(contexts)
-
-
-RUBRIC_PROMPT_TEMPLATE = """
-B?n l GI?NG VIN.
-
-NHI?M V?:
-Xy d?ng RUBRIC CH?M I?M cho bi h?c v?i m?c d? Bloom: {bloom_level}
-
-M T? M?C ?:
-{bloom_description}
-
-YU C?U:
-- Ch? s? d?ng thng tin trong TI LI?U
-- Rubric ph?i dnh gi dng m?c Bloom
-- C nhi?u tiu ch ch?m di?m
-- C m t? r cho t?ng m?c di?m
-
-TI LI?U:
-{context}
-
-?NH D?NG TR? V? (JSON):
-[
-  {{
-    "criterion": "...",
-    "levels": {{
-      "excellent": "...",
-      "good": "...",
-      "average": "...",
-      "poor": "..."
-    }}
-  }}
-]
-"""
-
-
-def generate_rubric(
-    topic: str,
-    bloom: BloomLevel
-) -> List[Dict[str, Any]]:
-    """
-    Generate grading rubric based on Bloom level
-    """
-
-    context = retrieve_context(topic)
-
-    if not context.strip():
-        raise ValueError("No relevant learning material found.")
-
-    prompt = RUBRIC_PROMPT_TEMPLATE.format(
-        bloom_level=bloom.value,
-        bloom_description=bloom.description,
-        context=context
-    )
-
-    llm = get_llm()
-    raw = llm.invoke(prompt)
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError("LLM output is not valid JSON.")
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\schemas.py
-==============================
-
-from pydantic import BaseModel
-from typing import List, Optional
-
-class TaskRequest(BaseModel):
-    task_type: str   # lesson_plan | assignment | exam | rubric | quiz
-    subject: str
-    clo: Optional[List[str]] = None
-    bloom_level: Optional[str] = None
-    difficulty: Optional[str] = None
-    num_items: Optional[int] = None
-    duration_minutes: Optional[int] = None
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\templates.py
-==============================
-
-LESSON_PLAN_TEMPLATE = """
-B?n l tr? gi?ng d?i h?c.
-D?a CH? trn ti li?u sau:
-{context}
-
-Hy so?n gio n cho mn: {subject}
-CLO: {clo}
-Th?i lu?ng: {duration} pht
-
-Yu c?u:
-- Khng thm ki?n th?c ngoi ti li?u
-- C?u trc r rng
-- C ho?t d?ng GV/SV
-"""
-
-==============================
-FILE: D:\ai-tro-giang\backend\pedagogy\validators.py
-==============================
-
-def validate_groundedness(answer, sources):
-    if not sources:
-        raise ValueError(
-            "N?i dung sinh ra khng c can c? t? ti li?u."
-        )
-
-==============================
-FILE: D:\ai-tro-giang\backend\rag\__init__.py
-==============================
-
-
-==============================
-FILE: D:\ai-tro-giang\backend\rag\hybrid_retriever.py
-==============================
-
-from typing import List, Tuple, Dict
-from langchain_core.documents import Document
-
-from backend.vectorstore.faiss_store import get_faiss_store
-from backend.vectorstore.bm25_store import BM25Store
-
-
-FAISS_K = 5
-BM25_K = 5
-
-FAISS_WEIGHT = 0.6
-BM25_WEIGHT = 0.4
-
-MIN_QUERY_LENGTH = 5
-
-
-def hybrid_search(query: str) -> List[Tuple[Document, float]]:
-    """
-    Hybrid retrieval: FAISS (semantic) + BM25 (keyword)
-
-    Defensive rules:
-    - Reject empty / too-short query
-    - Safe when FAISS/BM25 are empty (cold-start)
-    - Never throw exception
-    """
-
-    # === INPUT VALIDATION ===
-    if not query or not isinstance(query, str):
-        return []
-
-    query = query.strip()
-    if len(query) < MIN_QUERY_LENGTH:
-        return []
-
-    # === LOAD STORES (COLD-START SAFE) ===
-    try:
-        faiss_store = get_faiss_store()
-    except Exception:
-        faiss_store = None
-
-    try:
-        bm25_store = BM25Store.load()
-    except Exception:
-        bm25_store = None
-
-    score_map: Dict[str, Dict] = {}
-
-    # === FAISS SEARCH ===
-    if faiss_store is not None:
-        try:
-            faiss_results = faiss_store.similarity_search_with_score(
-                query,
-                k=FAISS_K
-            )
-        except Exception:
-            faiss_results = []
-
-        for doc, score in faiss_results:
-            doc_key = f"{doc.metadata.get('doc_id')}:{doc.metadata.get('chunk_id')}"
-            semantic_score = 1 / (1 + score)  # distance ? similarity
-
-            score_map[doc_key] = {
-                "doc": doc,
-                "semantic": semantic_score,
-                "keyword": 0.0
-            }
-
-    # === BM25 SEARCH ===
-    if bm25_store is not None:
-        try:
-            bm25_results = bm25_store.search(query, k=BM25_K)
-        except Exception:
-            bm25_results = []
-
-        for doc, score in bm25_results:
-            doc_key = f"{doc.metadata.get('doc_id')}:{doc.metadata.get('chunk_id')}"
-
-            if doc_key not in score_map:
-                score_map[doc_key] = {
-                    "doc": doc,
-                    "semantic": 0.0,
-                    "keyword": score
-                }
-            else:
-                score_map[doc_key]["keyword"] = score
-
-    # === COMBINE SCORES ===
-    results: List[Tuple[Document, float]] = []
-
-    for entry in score_map.values():
-        hybrid_score = (
-            FAISS_WEIGHT * entry["semantic"]
-            + BM25_WEIGHT * entry["keyword"]
-        )
-
-        if hybrid_score > 0:
-            results.append((entry["doc"], hybrid_score))
-
-    results.sort(key=lambda x: x[1], reverse=True)
-
-    return results
-
-==============================
-FILE: D:\ai-tro-giang\backend\rag\ingest.py
-==============================
-
-import os
-# C?p nh?t du?ng d?n import m?i
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import CharacterTextSplitter 
-from backend.vectorstore.faiss_store import get_faiss_store
-
-def ingest_document(file_path: str, course_id: str):
-    # 1. Load document
-    loader = TextLoader(file_path, encoding='utf-8')
-    documents = loader.load()
-
-    # 2. Chia nh? van b?n (S? d?ng class t? langchain_text_splitters)
-    text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    docs = text_splitter.split_documents(documents)
-
-    # 3. Gn metadata
-    for d in docs:
-        d.metadata["course_id"] = course_id
-        d.metadata["source_file"] = os.path.basename(file_path)
-
-    # 4. Thm vo Vector Store
-    vector_store = get_faiss_store()
-    vector_store.add_documents(docs)
-    
-    # 5. Luu index xu?ng ? dia
-    index_dir = "data/faiss_index"
-    if not os.path.exists(index_dir):
-        os.makedirs(index_dir)
-        
-    index_path = os.path.join(index_dir, course_id)
-    vector_store.save_local(index_path)
-    print(f"---  Ingest xong kha h?c: {course_id} ---")
-
-==============================
-FILE: D:\ai-tro-giang\backend\utils\chunking.py
-==============================
-
-# backend/utils/chunking.py
-
-import uuid
-from typing import List
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
-
-
-
-def chunk_text(
-    text: str,
-    source_file: str,
-    page: int = None,
-    section: str = None,
-    chunk_size: int = 400,
-    chunk_overlap: int = 80
-) -> List[Document]:
-    """
-    Chunk text into Documents with full metadata
-    """
-
-    doc_id = str(uuid.uuid4())
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ".", " ", ""]
-    )
-
-    chunks = splitter.split_text(text)
-
-    documents = []
-
-    for idx, chunk in enumerate(chunks):
-        metadata = {
-            "doc_id": doc_id,
-            "source_file": source_file,
-            "page": page,
-            "section": section,
-            "chunk_id": idx
-        }
-
-        documents.append(
-            Document(
-                page_content=chunk,
-                metadata=metadata
-            )
-        )
-
-    return documents
-
-==============================
-FILE: D:\ai-tro-giang\backend\utils\citation.py
-==============================
-
-def format_apa(source: dict) -> str:
-    """
-    APA 7th basic format
-    """
-    author = "Unknown"
-    year = "n.d."
-    title = source.get("source_file", "Unknown document")
-    page = source.get("page")
-
-    page_part = f" (p. {page})" if page is not None else ""
-
-    return f"{author} ({year}). {title}{page_part}."
-
-
-def format_ieee(source: dict, index: int) -> str:
-    """
-    IEEE basic format
-    """
-    title = source.get("source_file", "Unknown document")
-    page = source.get("page")
-
-    page_part = f", p. {page}" if page is not None else ""
-
-    return f"[{index}] {title}{page_part}."
-
-==============================
-FILE: D:\ai-tro-giang\backend\utils\text_extraction.py
-==============================
-
-from pathlib import Path
-from pypdf import PdfReader
-from docx import Document as DocxDocument
-
-
-def extract_text(file_path: str) -> str:
-    ext = Path(file_path).suffix.lower()
-
-    if ext == ".pdf":
-        reader = PdfReader(file_path)
-        return "\n".join(
-            page.extract_text() or ""
-            for page in reader.pages
-        )
-
-    if ext in [".docx"]:
-        doc = DocxDocument(file_path)
-        return "\n".join(p.text for p in doc.paragraphs)
-
-    if ext in [".txt"]:
-        with open(file_path, encoding="utf-8", errors="ignore") as f:
-            return f.read()
-
-    raise ValueError(f"Unsupported file type: {ext}")
-
-==============================
-FILE: D:\ai-tro-giang\backend\vectorstore\bm25_store.py
-==============================
-
-import pickle
-from pathlib import Path
-from typing import List, Tuple
-
-from rank_bm25 import BM25Okapi
-from langchain_core.documents import Document
-
-
-
-BM25_PATH = Path("data/bm25.pkl")
-
-
-class BM25Store:
-    def __init__(self):
-        self.documents: List[Document] = []
-        self.corpus = []
-        self.bm25 = None
-
-    def add_documents(self, docs: List[Document]):
-        for doc in docs:
-            tokens = doc.page_content.lower().split()
-            self.documents.append(doc)
-            self.corpus.append(tokens)
-
-        self.bm25 = BM25Okapi(self.corpus)
-
-    def search(self, query: str, k: int = 5) -> List[Tuple[Document, float]]:
-        if not self.bm25:
-            return []
-
-        query_tokens = query.lower().split()
-        scores = self.bm25.get_scores(query_tokens)
-
-        ranked = sorted(
-            enumerate(scores),
-            key=lambda x: x[1],
-            reverse=True
-        )[:k]
-
-        return [
-            (self.documents[idx], score)
-            for idx, score in ranked
-            if score > 0
-        ]
-
-    def save(self):
-        BM25_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(BM25_PATH, "wb") as f:
-            pickle.dump(self, f)
-
-    @staticmethod
-    def load():
-        if not BM25_PATH.exists():
-            return BM25Store()
-
-        with open(BM25_PATH, "rb") as f:
-            return pickle.load(f)
-
-==============================
-FILE: D:\ai-tro-giang\backend\vectorstore\faiss_store.py
-==============================
-
-# backend/vectorstore/faiss_store.py
-
-import os
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
-_FAISS_STORE = None
-FAISS_PATH = "data/faiss_index"
-
-def get_embeddings():
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-def get_faiss_store():
-    global _FAISS_STORE
-
-    if _FAISS_STORE is not None:
-        return _FAISS_STORE
-
-    embeddings = get_embeddings()
-
-    index_file = os.path.join(FAISS_PATH, "index.faiss")
-
-    if os.path.exists(index_file):
-        # ? Load index cu
-        _FAISS_STORE = FAISS.load_local(
-            FAISS_PATH,
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
-    else:
-        # ? T?o index m?i (EMPTY, khng crash)
-        _FAISS_STORE = FAISS.from_texts(
-            texts=["__init__"],
-            embedding=embeddings,
-            metadatas=[{"system": True}]
-        )
-
-        os.makedirs(FAISS_PATH, exist_ok=True)
-        _FAISS_STORE.save_local(FAISS_PATH)
-
-    return _FAISS_STORE
-
-
-def save_faiss_store():
-    if _FAISS_STORE is not None:
-        _FAISS_STORE.save_local(FAISS_PATH)
-
-==============================
-FILE: D:\ai-tro-giang\docker-compose.yml
-==============================
-
-version: "3.9"
-
-services:
-  backend:
-    build: .
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/data
-
-==============================
-FILE: D:\ai-tro-giang\Dockerfile
-==============================
-
-FROM python:3.10
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY backend backend
-COPY data data
-
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-==============================
-FILE: D:\ai-tro-giang\frontend\src\api.js
-==============================
-
-import axios from "axios";
-
-export const api = axios.create({
-  baseURL: "http://127.0.0.1:8000"
-});
-
-export function setToken(token) {
-  api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-}
-
-==============================
-FILE: D:\ai-tro-giang\frontend\src\App.jsx
-==============================
-
-import { useState } from "react";
-import { api, setToken } from "./api";
-import ChatBox from "./components/ChatBox";
-
-export default function App() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState(null);
-  const [file, setFile] = useState(null);
-
-  async function login() {
-    const res = await api.post("/auth/login", {
-      username,
-      password,
-    });
-
-    setToken(res.data.access_token);
-    setRole(res.data.role);
-
-    alert("Login thnh cng v?i role: " + res.data.role);
-  }
-
-  async function upload() {
-    const form = new FormData();
-    form.append("file", file);
-
-    await api.post("/upload/", form);
-    alert("Upload & ingest xong");
-  }
-
-  return (
-    <div style={{ padding: 30, fontFamily: "Arial" }}>
-      <h2>AI Tr? Gi?ng</h2>
-
-      {/* LOGIN */}
-      <h3>Login</h3>
-      <input
-        placeholder="username"
-        onChange={(e) => setUsername(e.target.value)}
-      />
-      <br />
-      <input
-        type="password"
-        placeholder="password"
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      <br />
-      <button onClick={login}>Login</button>
-
-      {/* UPLOAD  TEACHER ONLY */}
-      {role === "teacher" && (
-        <>
-          <h3>Upload ti li?u (GV)</h3>
-          <input
-            type="file"
-            onChange={(e) => setFile(e.target.files[0])}
-          />
-          <br />
-          <button onClick={upload}>Upload</button>
-        </>
-      )}
-
-      <hr />
-
-      {/* CHAT  DNG CHATBOX PHASE 3 */}
-      <ChatBox />
-    </div>
-  );
-}
-
-==============================
-FILE: D:\ai-tro-giang\frontend\src\components\ChatBox.jsx
-==============================
-
-import { useState } from "react";
-
-export default function ChatBox() {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [sources, setSources] = useState([]);
-  const [citations, setCitations] = useState(null);
-
-  const ask = async () => {
-    const res = await fetch("http://localhost:8000/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
-    });
-
-    const data = await res.json();
-    setAnswer(data.answer);
-    setSources(data.sources || []);
-    setCitations(data.citations || null);
-  };
-
-  return (
-    <div style={{ maxWidth: 800, margin: "40px auto" }}>
-      <h2>AI Tr? Gi?ng</h2>
-
-      <textarea
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        rows={3}
-        style={{ width: "100%" }}
-      />
-
-      <button onClick={ask} style={{ marginTop: 10 }}>
-        H?i
-      </button>
-
-      {answer && (
-        <>
-          <h3>Tr? l?i (c g?n ngu?n)</h3>
-          <pre style={{ whiteSpace: "pre-wrap" }}>{answer}</pre>
-        </>
-      )}
-
-      {sources.length > 0 && (
-        <>
-          <h4>Ngu?n tham kh?o theo Chunk</h4>
-          <ul>
-            {sources.map((s, idx) => (
-              <li key={idx}>
-                <b>[CHUNK_{idx}]</b>  {s.source_file}
-                {s.page !== null && `  Trang ${s.page}`}
-                {s.section && `  ${s.section}`}
-                <details>
-                  <summary>Xem trch do?n</summary>
-                  <small>{s.preview}</small>
-                </details>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {citations && (
-        <>
-          <h4>References (APA)</h4>
-          <ul>
-            {citations.apa.map((c, i) => (
-              <li key={i}>{c}</li>
-            ))}
-          </ul>
-
-          <h4>References (IEEE)</h4>
-          <ul>
-            {citations.ieee.map((c, i) => (
-              <li key={i}>{c}</li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
-  );
-}
-
-==============================
-FILE: D:\ai-tro-giang\frontend\src\components\FileUpload.jsx
-==============================
-
-import React, { useState } from "react";
-import axios from "axios";
-
-function FileUpload() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [courseId, setCourseId] = useState("ML101");
-  const [loading, setLoading] = useState(false);
-
-  const handleFileChange = (e) => {
-    setSelectedFile(e.target.files[0]);
-  };
-
-  const handleUpload = async () => {
-    if (!selectedFile) {
-      alert("Vui lng ch?n m?t file!");
-      return;
-    }
-
-    setLoading(true);
-    const formData = new FormData();
-    // Quan tr?ng: Tn 'file' ph?i kh?p v?i backend
-    formData.append("file", selectedFile);
-
-    try {
-      const response = await axios.post(
-        `http://localhost:8000/upload/?course_id=${courseId}`,
-        formData,
-        {
-          headers: { "Content-Type": "multipart/form-data" },
-        }
-      );
-      alert("Upload thnh cng: " + response.data.message);
-    } catch (error) {
-      console.error("L?i upload:", error);
-      alert("L?i upload: " + (error.response?.data?.detail || "Khng r l?i"));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={{ padding: "20px", border: "1px solid #ccc", marginBottom: "20px" }}>
-      <h3>Upload Ti Li?u (GV)</h3>
-      <input
-        type="text"
-        placeholder="Course ID (vd: ML101)"
-        value={courseId}
-        onChange={(e) => setCourseId(e.target.value)}
-      />
-      <br /><br />
-      <input type="file" onChange={handleFileChange} accept=".txt" />
-      <button onClick={handleUpload} disabled={loading}>
-        {loading ? "ang x? l..." : "T?i ln & Ingest"}
-      </button>
-    </div>
-  );
-}
-
-export default FileUpload;
-
-==============================
-FILE: D:\ai-tro-giang\frontend\src\main.jsx
-==============================
-
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-
-==============================
-FILE: D:\ai-tro-giang\README.md
-==============================
-
-# AI Tr? Gi?ng (RAG-based Tutor Assistant)
-
-D? n AI tr? gi?ng s? d?ng ki?n trc **RAG (Retrieval-Augmented Generation)**:
-- Ingest ti li?u h?c t?p (TXT / PDF / DOCX)
-- Luu vector b?ng FAISS
-- Tr? l?i cu h?i d?a trn ti li?u (khng b?a)
-
----
-
-## 1. C?u trc d? n
-
-backend/
-agent/ # AI tutor logic
-rag/ # ingest + retriever
-api/ # FastAPI endpoints
-main.py
-data/
-raw_docs/ # ti li?u d?u vo (GV upload)
-faiss_index/ # vector database
-
-
----
-
-## 2. Ci d?t mi tru?ng
-
-```bash
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-==============================
-FILE: D:\ai-tro-giang\requirements.txt
-==============================
-
-fastapi
-uvicorn
-python-jose
-passlib[bcrypt]
-python-multipart
-
-langchain-core
-langchain-community
-langchain-text-splitters
-faiss-cpu
-sentence-transformers
-transformers
-torch
-pypdf
-python-docx
-
+FILE: .\data\llama_index\TEST_COURSE_V1\default__vector_store.json
+==============================
+IxF2                                 ʧ+='k/2y=X<Z=x<ӌu'>`Sm':
+-]5޼%=R;m;(S=(|;jQSL2Y@>NlQ={=A 5=$=x;osCj6q=<=3 ; U<昿d=c[<'JH<k<'<xMU=BL>/ŨIx2=l!:n&<b	W齛@=j0=9h<W<޷qY&Q9^=s=0mW;TG,փJ<4;G˃=s:=2	;r:=TH=%q&=\3I<?i=H=n<[Z<׊=K =iD$xu=e}b=W	<S߳<m>΢%*<XzF^v-=x.]<y*n0Oj>Ļ	mk;3Ns>:|=7\ǋ sSֽ5JL<K"ĽF#EN<V=f};׼+%=EsE<*>=c$=
+=8=<Q򶽮&<&L=zS+=s\x˻_lc{LR'b=9Ｚ><Q=5$=X<Ap'<qQS<e=X9Y<1|<,<a`=
+,:O;Z=W=<!<֝<R=8Gvɼ-7=	%0	=@ˎ	n=~]<;W`ɼy(т2r%cN<N<`M<}<0ժ<"\=λKt,;"<҉=O=(=غ<@=+	CP=dB':h=8Ra=(E[=}k973<
+<
+͙={-"<^Uj=LS=GGY=5
+jP<
+s=W-iO>Ɯ==.ɻm%=Ue<cq8_퉼
+<=t<2tB
+;b½/彺˺쥎Q=b`֔d=-=s-=7Pqa=<:2='n,~?=|ݝxx<N~(=/"ͽmMҝs=Y@M;o*xz<䛫e;xK<~`<!=0L粃'i0mk+=Am=|<Hq=ױ1<h;<hq=w=bho
+>)=cO*<<Y=e^>0 =0=j9@=;=N:+ޡa=&=ΰ;*_<]rտ=i=F(<v`<L.<ᨽ\)m=꠼3wU.#Gu=Ps#U=<hؼWV<9<E=Z<sm'м@<)Buѐ;Jg^==IG<=P<>&<~eՓ<myDʌ=<ld=8WW=鈽U<=R<Udf<QD=[=lNԀ=g=*Y&U=_wa<DXB;5=L==;f;i =pYAVEor!2=Rr)<<
+cR=<:V=<ݨHU=;
+ۣR~*<`v=ũ/;=ܽqS; O<{ü	=ge\:=ȼ$,j;;ﳫS=<㌕G<<-<P<"]=I=chD0kb>=EO2=<q@!<&cZ<<Þ8=,ϼϻl=
+ZNN@v
+[={q=˗	=Ql;!=e=Diu#=e<u;4%~:'Y =>==q%=ͼ1=`"[<ۈ0=m=D=<NJ=΂s#t׽y=g=Iao~<cн\=9^Jm
+k=z m<i|<;&u>#77ʺ7LĻнD&<:<A;Vk̼R=\t/
+A`=興^8c<b43<*Bvf=<}<kwT<9&.;3{Z<p393=dt=(ٻh_1Ӫzs=BnC0=P<BF=#ǉ5iS2=:ہ_s<=Z).=@Kd`Dz'=!p"=M"==*Q;m{oَ'b=cS`=S]=w<=9	=q*="cS^:sƽ<$O=@M=^D꼄=ݺ:k=Α<`;<\螻yl;BhI=xƼIh=<r:yC}[,lo=ATXڼa=;p>;S<ŕ=FbJu
+g7 ܼ&q}<4=7<8ʐ=سn;w;O=e<-<=9.k=y<:A$t=Gڲ;:)2IKS<XS=bj	o=°<Ne<=ڽD=IO<a=_<O_=i߽=eA/*=2½lT=
+4A<i@U=s;=	%3!4<=Q ڻ==[=b=pvg=	%=RU\k
+m<Ea	Ǧl#b<~`@=f?="=	Mּ6Zfgn}=v=8Mt'*t@{.<=;A݆=gyA= :;="=AԻgR:qYXq<$o֍i=<<C*Z=Lp;fg=)=㵼̞=DS=GV =ۙ=_D"<G<*F|p==߫Ȇ<ӎi;9=VG{v&xAG<ʜx<F;ii$7;mppleU<N<W<#>ǒ=`^Ua=(ջ3<I	7=<=1	>C;W-;S =-|<+=WJ=磠)Yxi=M9=}e=y
+1=DVi=8=i9=Ԗ=ż0=b=!<aʽ@|=_Ӽph!UT ,j;@*ƽW|=#k$<h;<HIߌ=]zPj/	z, =OjK=%L=F:4;W#<_랽n<6]YA=tݯҼ+,˼]v=DV/bz	C<P.=E Y=8qȽHF=m
+=&]j
+<B;ϽMC=M4<tq'k<{C=\=Z;.&=:I?<y<;~sf=Q;$9D%=V2NMO:Qo=¾<]qJJ=Q="1֍<%'	`
+ȼ'3j<O=IѼ}EQ=½	<
+)ͽ)2d=	X</B(Jb@=P\=2ͦϼļ̻=֍t<viض#=7>ؿ".J#D><L2W<==@9=j<s<ʲn=lM={P=	@<=h䎫rA=زT>Y6==Ҽ;u===p<X:<m<BռH=)(N۩<U#=;^VZ!!9B,P}'=W˝9Ko=<BN?:nre{;!<=%<vk<<=jZ{T'(ވW<==ƫ=nL8=<<y =yؼ>
+]=#ɲ|໷ɽm9F|g^K+ڼ͛
+NR{<+ҷͼ.1DP<=<?=V<0D.=X==Z`;="}==Ȣ==f5f.<>=n=o;w<=:*K=
+:#OVZb=y
++;޻w̽_<=<W;U DU=&<t<˻X;ttl==<͉5ܽ=hq˼{. a;Y帏={<>=<V=dYUC}jA=ꚽ^~=F;j'XV<̑
+= Ƽ$=k<՚pʻk=CM=|YLＭA;F;HWM=]@<<_G#<^&}=:o^T=τ@54rI=cߌ=o=;L9]1=i;
+u=:m(;rV.r#<~<]x== ֗-<{+/Ra`<}w<νE%c<O`}<Ln<=86=GK<$'8=t-=_riHK<t<5=/Z=z8=E=Dr<<[t\=Y<ũ<="~==4(^<7<"m{5吺}<Ƚ&D=N."=T<=F;=z1Յ:!V0'뽂Ѻ;tq<(=L-<NW"=b9P=d`qY==`Hl<Vj=&=9
+m?=Z^vC:bՓE=BF'<ÿ7>KN<#u:x=c0=<Wcr=*f^;ca<6Q;9vr07<ϻb;91ء0^(>*-M;T=<-<v~|˰=*~<.xN=<3j<&DCXG2== ^=d('>Q[=jc@;q),<PS=FR(݊6R$</Mq<==8"޼i>	1=(z!޼$yj=<`=砞=Hֺ<k<ȅ߽c<ͣ;Ѐ;O&==5"=<P"VC#VUt};x&;n6=Dd<I =._)媽U,pW'h=Z<L=M3ъ=(=:l;;-e,<Ny<<!!Tɽ-lS<=_+<!<RRyb<𨇼G=$=vXI=G=G{<G<a|=R=Nw`qaxR<;<\=p+ἽⒻTH<fn=^%=<8ļh<d=Ͻt@}ۼ;k?;Guq=
+.=I9=*=oX=;F-W=i=(s鬷<`f=/PG"i&=lѼrr<<<r[߼oX=+r\l?=]6<=/B=;+=6*ӿ<^sO=w<=񨽴=Q|<Jb<N\=q=<J	G<=6=sI=/
+==============================
+FILE: .\data\llama_index\TEST_COURSE_V1\docstore.json
+==============================
+{"docstore/data": {"f163e0ffe970240f4ce54d57058a3d0eb74625e98ec4e015566495cf4e55afa5": {"__data__": {"id_": "f163e0ffe970240f4ce54d57058a3d0eb74625e98ec4e015566495cf4e55afa5", "embedding": null, "metadata": {"doc_id": "TEST_DOC_1", "file_name": "test_file.txt", "page": 1, "line_start": 1, "line_end": 5, "source": "unknown", "content_hash": "f163e0ffe970240f4ce54d57058a3d0eb74625e98ec4e015566495cf4e55afa5", "ingest_time": "2026-01-29T18:07:04.769051", "index_version": "v1.0", "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"}, "excluded_embed_metadata_keys": ["ingest_time", "index_version", "content_hash", "line_start", "line_end", "embedding_model", "doc_id", "page", "file_name", "source"], "excluded_llm_metadata_keys": ["content_hash", "index_version", "embedding_model", "ingest_time", "doc_id"], "relationships": {}, "metadata_template": "{key}: {value}", "metadata_separator": "\n", "text": "Ki\u1ebfn tr\u00fac RAG bao g\u1ed3m Retrieval v\u00e0 Generation. \u0110\u00e2y l\u00e0 test chunk s\u1ed1 1.", "mimetype": "text/plain", "start_char_idx": null, "end_char_idx": null, "metadata_seperator": "\n", "text_template": "{metadata_str}\n\n{content}", "class_name": "TextNode"}, "__type__": "1"}, "d31399fc889926824565528c8d2f6b629d715e674156dfc245c26dce1d248bb0": {"__data__": {"id_": "d31399fc889926824565528c8d2f6b629d715e674156dfc245c26dce1d248bb0", "embedding": null, "metadata": {"doc_id": "TEST_DOC_1", "file_name": "test_file.txt", "page": 1, "line_start": 6, "line_end": 10, "source": "unknown", "content_hash": "d31399fc889926824565528c8d2f6b629d715e674156dfc245c26dce1d248bb0", "ingest_time": "2026-01-29T18:07:04.769051", "index_version": "v1.0", "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"}, "excluded_embed_metadata_keys": ["ingest_time", "index_version", "content_hash", "line_start", "line_end", "embedding_model", "doc_id", "page", "file_name", "source"], "excluded_llm_metadata_keys": ["content_hash", "index_version", "embedding_model", "ingest_time", "doc_id"], "relationships": {}, "metadata_template": "{key}: {value}", "metadata_separator": "\n", "text": "LlamaIndex gi\u00fap qu\u1ea3n l\u00fd d\u1eef li\u1ec7u cho LLM. \u0110\u00e2y l\u00e0 test chunk s\u1ed1 2.", "mimetype": "text/plain", "start_char_idx": null, "end_char_idx": null, "metadata_seperator": "\n", "text_template": "{metadata_str}\n\n{content}", "class_name": "TextNode"}, "__type__": "1"}, "d3bb09c48113c392387d0528e2a6ab3bfa532a487bd67da6ca9735b483a9829e": {"__data__": {"id_": "d3bb09c48113c392387d0528e2a6ab3bfa532a487bd67da6ca9735b483a9829e", "embedding": null, "metadata": {"doc_id": "TEST_DOC_1", "file_name": "test_file.txt", "page": 2, "line_start": 1, "line_end": 4, "source": "unknown", "content_hash": "d3bb09c48113c392387d0528e2a6ab3bfa532a487bd67da6ca9735b483a9829e", "ingest_time": "2026-01-29T18:07:04.769051", "index_version": "v1.0", "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"}, "excluded_embed_metadata_keys": ["ingest_time", "index_version", "content_hash", "line_start", "line_end", "embedding_model", "doc_id", "page", "file_name", "source"], "excluded_llm_metadata_keys": ["content_hash", "index_version", "embedding_model", "ingest_time", "doc_id"], "relationships": {}, "metadata_template": "{key}: {value}", "metadata_separator": "\n", "text": "Embedding model chuy\u1ec3n text th\u00e0nh vector. \u0110\u00e2y l\u00e0 test chunk s\u1ed1 3.", "mimetype": "text/plain", "start_char_idx": null, "end_char_idx": null, "metadata_seperator": "\n", "text_template": "{metadata_str}\n\n{content}", "class_name": "TextNode"}, "__type__": "1"}, "a35ed5c38d8aaf71e1830d2e851b854aea37d1392ffecc9ff01a6a3a84516584": {"__data__": {"id_": "a35ed5c38d8aaf71e1830d2e851b854aea37d1392ffecc9ff01a6a3a84516584", "embedding": null, "metadata": {"doc_id": "TEST_DOC_2", "file_name": "test_file_2.txt", "page": 99, "line_start": 1, "line_end": 1, "source": "unknown", "content_hash": "a35ed5c38d8aaf71e1830d2e851b854aea37d1392ffecc9ff01a6a3a84516584", "ingest_time": "2026-01-29T18:07:12.146660", "index_version": "v1.0", "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"}, "excluded_embed_metadata_keys": ["ingest_time", "index_version", "content_hash", "line_start", "line_end", "embedding_model", "doc_id", "page", "file_name", "source"], "excluded_llm_metadata_keys": ["content_hash", "index_version", "embedding_model", "ingest_time", "doc_id"], "relationships": {}, "metadata_template": "{key}: {value}", "metadata_separator": "\n", "text": "\u0110\u00e2y l\u00e0 chunk ho\u00e0n to\u00e0n m\u1edbi.", "mimetype": "text/plain", "start_char_idx": null, "end_char_idx": null, "metadata_seperator": "\n", "text_template": "{metadata_str}\n\n{content}", "class_name": "TextNode"}, "__type__": "1"}}, "docstore/metadata": {"f163e0ffe970240f4ce54d57058a3d0eb74625e98ec4e015566495cf4e55afa5": {"doc_hash": "bfcd84ac1b55425f38e8c89742db1506e31ac3ae81faafee5d3afb80acbfb685"}, "d31399fc889926824565528c8d2f6b629d715e674156dfc245c26dce1d248bb0": {"doc_hash": "213b38ec10e59dc33a1c3db8a48885b030484427c3126a1a878214c4f79ac406"}, "d3bb09c48113c392387d0528e2a6ab3bfa532a487bd67da6ca9735b483a9829e": {"doc_hash": "8a9056ff29fdf98b68d9ebf682159b5804c6f5b066e6a8b51c64049a2f12e0c2"}, "a35ed5c38d8aaf71e1830d2e851b854aea37d1392ffecc9ff01a6a3a84516584": {"doc_hash": "97fd8270122e82a462739cc93a82c104da7300005f1936f3672dd2563b62c2c6"}}}
+==============================
+FILE: .\data\llama_index\TEST_COURSE_V1\graph_store.json
+==============================
+{"graph_dict": {}}
+==============================
+FILE: .\data\llama_index\TEST_COURSE_V1\image__vector_store.json
+==============================
+{"embedding_dict": {}, "text_id_to_ref_doc_id": {}, "metadata_dict": {}}
+==============================
+FILE: .\data\llama_index\TEST_COURSE_V1\index_store.json
+==============================
+{"index_store/data": {"f2355889-67a9-4192-a465-c8ec4404fa9a": {"__type__": "vector_store", "__data__": "{\"index_id\": \"f2355889-67a9-4192-a465-c8ec4404fa9a\", \"summary\": null, \"nodes_dict\": {\"0\": \"f163e0ffe970240f4ce54d57058a3d0eb74625e98ec4e015566495cf4e55afa5\", \"1\": \"d31399fc889926824565528c8d2f6b629d715e674156dfc245c26dce1d248bb0\", \"2\": \"d3bb09c48113c392387d0528e2a6ab3bfa532a487bd67da6ca9735b483a9829e\", \"3\": \"a35ed5c38d8aaf71e1830d2e851b854aea37d1392ffecc9ff01a6a3a84516584\"}, \"doc_id_dict\": {}, \"embeddings_dict\": {}}"}}}
 ==============================
 FILE: .\frontend\index.html
 ==============================
@@ -8229,14 +4337,14 @@ import axios from "axios";
 export const api = axios.create({
   baseURL: "http://127.0.0.1:8000",
 });
-
+export default api;
 // KHÔNG thêm bất kỳ interceptors nào liên quan đến Authorization ở đây
 ==============================
 FILE: .\frontend\src\components\ChatBox.jsx
 ==============================
 // FILE: frontend/src/components/ChatBox.jsx
 import React, { useState } from 'react';
-import { api } from '../api'; // Hoặc import axios trực tiếp nếu chưa config api
+import { api } from '../api/client'; // Hoặc import axios trực tiếp nếu chưa config api
 
 const ChatBox = () => {
   const [question, setQuestion] = useState("");
@@ -8329,63 +4437,203 @@ const FileUpload = () => {
 
 export default FileUpload;
 ==============================
-FILE: .\tests\conftest.py
+FILE: .\tests\test_llama_ingest_strict.py
 ==============================
+# FILE: tests/test_llama_ingest_strict.py
 import sys
-from pathlib import Path
+import os
+import shutil
+import json
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# Add project root to path
+sys.path.append(os.getcwd())
 
+from backend.rag.llama_ingest import ingest_canonical_chunks, get_index_path
+from backend.rag.retrieval import get_llama_retriever
+
+# --- MOCK DATA ---
+MOCK_CHUNKS = [
+    {
+        "doc_id": "TEST_DOC_1",
+        "page": 1,
+        "line_start": 1,
+        "line_end": 5,
+        "text": "Kiến trúc RAG bao gồm Retrieval và Generation. Đây là test chunk số 1."
+    },
+    {
+        "doc_id": "TEST_DOC_1",
+        "page": 1,
+        "line_start": 6,
+        "line_end": 10,
+        "text": "LlamaIndex giúp quản lý dữ liệu cho LLM. Đây là test chunk số 2."
+    },
+    {
+        "doc_id": "TEST_DOC_1",
+        "page": 2,
+        "line_start": 1,
+        "line_end": 4,
+        "text": "Embedding model chuyển text thành vector. Đây là test chunk số 3."
+    }
+]
+
+COURSE_ID = "TEST_COURSE_V1"
+
+def clean_test_env():
+    path = get_index_path(COURSE_ID)
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    print(f"🧹 Cleaned test environment: {path}")
+
+def test_ingestion():
+    print("\n--- 🧪 TEST 1: Initial Ingestion ---")
+    
+    # 1. First Ingest
+    ingest_canonical_chunks(MOCK_CHUNKS, COURSE_ID, "test_file.txt", "TEST_DOC_1")
+    
+    # Check if files exist
+    idx_path = get_index_path(COURSE_ID)
+    if os.path.exists(os.path.join(idx_path, "docstore.json")) and \
+       os.path.exists(os.path.join(idx_path, "default__vector_store.json")):
+        print("✅ Storage files created.")
+    else:
+        print("❌ Storage files MISSING.")
+        return False
+    return True
+
+def test_deduplication():
+    print("\n--- 🧪 TEST 2: Deduplication Check ---")
+    
+    # 2. Re-ingest same chunks (Expect skipping all)
+    print("running re-ingest (should skip all)...")
+    ingest_canonical_chunks(MOCK_CHUNKS, COURSE_ID, "test_file.txt", "TEST_DOC_1")
+    
+    # 3. Ingest new chunk
+    NEW_CHUNK = [{
+        "doc_id": "TEST_DOC_2", 
+        "page": 99, 
+        "line_start": 1, 
+        "line_end": 1, 
+        "text": "Đây là chunk hoàn toàn mới."
+    }]
+    print("running ingest new chunk...")
+    ingest_canonical_chunks(NEW_CHUNK, COURSE_ID, "test_file_2.txt", "TEST_DOC_2")
+    
+    print("✅ Deduplication logic executed (check logs for 'Skipped' messages).")
+
+def test_retrieval_integrity():
+    print("\n--- 🧪 TEST 3: Retrieval & Metadata Integrity ---")
+    
+    retriever = get_llama_retriever(COURSE_ID, top_k=1)
+    results = retriever.retrieve("Kiến trúc RAG")
+    
+    if not results:
+        print("❌ No results found!")
+        return
+
+    top_node = results[0]
+    meta = top_node.metadata
+    
+    print("🔍 Retrieved Node Metadata:")
+    print(json.dumps(meta, indent=2))
+    
+    # Strict Validation Checks
+    checks = [
+        ("page" in meta, "Missing 'page'"),
+        (meta.get("page") == 1, "Wrong 'page' value"),
+        ("line_start" in meta, "Missing 'line_start'"),
+        ("line_end" in meta, "Missing 'line_end'"),
+        (meta.get("doc_id") == "TEST_DOC_1", "Wrong 'doc_id'"),
+        (meta.get("index_version") == "v1.0", "Missing/Wrong version"),
+        (meta.get("embedding_model") == "sentence-transformers/all-MiniLM-L6-v2", "Wrong Embedding Tag")
+    ]
+    
+    passed = True
+    for condition, msg in checks:
+        if not condition:
+            print(f"❌ FAIL: {msg}")
+            passed = False
+    
+    if passed:
+        print("✅ All Metadata checks PASSED.")
+
+def main():
+    clean_test_env()
+    if test_ingestion():
+        test_deduplication()
+        test_retrieval_integrity()
+    
+    print("\n🎉 ALL TESTS COMPLETED.")
+
+if __name__ == "__main__":
+    main()
 ==============================
-FILE: .\tests\test_eval.py
+FILE: .\tests\test_strict_chunking.py
 ==============================
-from backend.eval.runner import run_evaluation
+import json
+import sys
+import os
 
-def test_eval_pipeline_runs():
-    results = run_evaluation()
-    assert isinstance(results, list)
-    assert len(results) > 0
-    assert "score" in results[0]
+# Thêm đường dẫn để import được module backend
+sys.path.append(os.getcwd())
 
-==============================
-FILE: .\tests\test_eval_pipeline.py
-==============================
-from backend.eval.runner import run_evaluation
+from backend.rag.chunking import chunk_canonical_data
 
-def test_eval_runs():
-    results = run_evaluation()
-    assert isinstance(results, list)
-    assert "grounded" in results[0]
+# 1. GIẢ LẬP INPUT (Canonical Structured TXT)
+# Dữ liệu giả lập 2 trang, có dòng, có nội dung liền mạch
+mock_canonical_input = [
+    {
+        "page": 1,
+        "source": "manual_upload",
+        "lines": [
+            {"line_id": 1, "text": "CHƯƠNG 1: GIỚI THIỆU VỀ MACHINE LEARNING"},
+            {"line_id": 2, "text": "Học máy (Machine Learning) là một lĩnh vực của trí tuệ nhân tạo."},
+            {"line_id": 3, "text": "Nó tập trung vào việc xây dựng các hệ thống có khả năng học hỏi từ dữ liệu."},
+            {"line_id": 4, "text": "Thay vì lập trình các quy tắc cụ thể, chúng ta huấn luyện mô hình."},
+            {"line_id": 5, "text": "Mô hình sẽ tự tìm ra các quy luật ẩn chứa bên trong dữ liệu đầu vào."},
+            {"line_id": 6, "text": "Có ba loại học máy chính: Học có giám sát, không giám sát và bán giám sát."},
+            {"line_id": 7, "text": "Trong học có giám sát, dữ liệu được dán nhãn cụ thể."},
+            {"line_id": 8, "text": "Ví dụ: Phân loại email là spam hay không spam dựa trên lịch sử."},
+            {"line_id": 9, "text": "Học không giám sát xử lý dữ liệu chưa được dán nhãn."},
+            {"line_id": 10, "text": "Mục tiêu là tìm ra cấu trúc ẩn, ví dụ như gom nhóm khách hàng."}
+        ]
+    },
+    {
+        "page": 2,
+        "source": "manual_upload",
+        "lines": [
+            {"line_id": 1, "text": "CHƯƠNG 2: MẠNG NƠ-RON NHÂN TẠO"},
+            {"line_id": 2, "text": "Mạng nơ-ron được lấy cảm hứng từ bộ não con người."},
+            {"line_id": 3, "text": "Nó bao gồm các lớp: Lớp đầu vào, lớp ẩn và lớp đầu ra."},
+            {"line_id": 4, "text": "Mỗi nơ-ron nhận tín hiệu, nhân trọng số và đi qua hàm kích hoạt."},
+            {"line_id": 5, "text": "Deep Learning là thuật ngữ chỉ các mạng nơ-ron có nhiều lớp ẩn."},
+            {"line_id": 6, "text": "Ứng dụng của Deep Learning bao gồm nhận diện ảnh và xử lý ngôn ngữ."}
+        ]
+    }
+]
 
-==============================
-FILE: .\tests\test_guardrails.py
-==============================
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.agent.qa import answer_question
+def run_test():
+    doc_id = "DOC_TEST_001"
+    
+    # 2. CHẠY LOGIC CHUNKING
+    print("⏳ Đang thực hiện Chunking...")
+    chunks = chunk_canonical_data(mock_canonical_input, doc_id)
+    
+    # 3. XUẤT OUTPUT RA JSONL
+    output_file = "chunks_output.jsonl"
+    with open(output_file, "w", encoding="utf-8") as f:
+        for chunk in chunks:
+            f.write(json.dumps(chunk, ensure_ascii=False) + "\n")
+            
+    print(f"✅ Đã tạo file output: {output_file}")
+    print(f"📊 Tổng số chunks: {len(chunks)}")
+    
+    # In mẫu để kiểm tra
+    print("\n--- MẪU 2 CHUNKS ĐẦU TIÊN ---")
+    for c in chunks[:2]:
+        print(json.dumps(c, indent=2, ensure_ascii=False))
 
-def test_empty_query():
-    assert hybrid_search("") == []
-
-def test_short_query():
-    assert hybrid_search("hi") == []
-
-def test_out_of_scope_question():
-    result = answer_question("Thủ đô của Pháp là gì?")
-    assert "không tìm thấy" in result["answer"].lower() \
-        or "vượt ngoài phạm vi" in result["answer"].lower()
-
-==============================
-FILE: .\tests\test_rag_guardrail.py
-==============================
-from backend.agent.qa import answer_question
-
-def test_out_of_scope():
-    r = answer_question("Ai là tổng thống Mỹ?")
-    assert "không tìm thấy" in r["answer"].lower() \
-        or "vượt ngoài phạm vi" in r["answer"].lower()
-
+if __name__ == "__main__":
+    run_test()
 ==============================
 FILE: .\uploads\test_knowledge.txt
 ==============================

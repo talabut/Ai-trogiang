@@ -1,7 +1,12 @@
 from fastapi import APIRouter, File, UploadFile, Query
 import shutil
 import os
-from backend.rag.ingest import ingest_document
+from pathlib import Path
+
+from backend.utils.text_extraction import extract_text
+from backend.rag.canonicalize import canonicalize_pages
+from backend.rag.chunking import chunk_canonical_pages
+from backend.rag.llama_ingest import ingest_canonical_chunks
 
 router = APIRouter()
 
@@ -10,19 +15,37 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/")
 async def upload_file(
-    file: UploadFile = File(...), 
-    course_id: str = Query("ML101") # Fix: Thêm Query default để không bắt buộc
+    file: UploadFile = File(...),
+    course_id: str = Query("ML101")
 ):
+    # 1. Save file
     file_path = os.path.join(UPLOAD_DIR, file.filename)
-    
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
-    # Gọi hàm xử lý RAG
-    ingest_document(file_path, course_id)
-    
+
+    # 2. Extract raw pages
+    # EXPECT: List[Dict] [{page_num, text, ...}]
+    raw_pages = extract_text(file_path)
+
+    # 3. Canonicalize pages
+    canonical_pages = canonicalize_pages(raw_pages)
+
+    # 4. Chunking
+    doc_id = Path(file.filename).stem
+    chunks = chunk_canonical_pages(canonical_pages)
+
+    # 5. Ingest into LlamaIndex
+    ingest_canonical_chunks(
+        chunks=chunks,
+        course_id=course_id,
+        file_name=file.filename,
+        doc_id=doc_id
+    )
+
     return {
-        "filename": file.filename, 
-        "course_id": course_id, 
-        "status": "ingested"
+        "filename": file.filename,
+        "course_id": course_id,
+        "doc_id": doc_id,
+        "chunks": len(chunks),
+        "status": "uploaded_and_ingested"
     }

@@ -1,17 +1,27 @@
-/*************  ✨ Windsurf Command 🌟  *************/
-fastapi==0.109.0
-uvicorn==0.27.0
-python-multipart==0.0.6
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.1.2
-langchain==0.1.0
-langchain-google-genai==0.0.5
-langchain-community==0.0.10
-langchain-huggingface==0.0.1
-faiss-cpu==1.7.4
-rank_bm25==0.2.2
-pydantic==2.5.3
-python-dotenv==1.0.0
-sentence-transformers==2.2.2
-/*******  58c2cc60-25cb-4ee9-95aa-e526eee02690  *******/
+fastapi
+uvicorn
+python-multipart
+python-jose
+passlib[bcrypt]
+
+langchain-core
+langchain-community
+langchain-text-splitters
+faiss-cpu
+sentence-transformers
+transformers
+torch
+pypdf
+python-docx
+
+# --- OCR & PDF Processing ---
+pdf2image
+paddlepaddle>=2.6.2
+paddleocr>=2.7.0
+opencv-python-headless
+
+# ... các thư viện cũ ...
+llama-index-core
+llama-index-embeddings-huggingface
+llama-index-vector-stores-faiss
+llama-index-readers-file
