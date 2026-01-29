@@ -1,9 +1,8 @@
-import axios from 'axios';
+import axios from "axios";
 
-const api = axios.create({
-  // Base URL trỏ đến Backend FastAPI
-  baseURL: 'http://localhost:8000/api',
+// Khởi tạo axios instance cơ bản nhất
+export const api = axios.create({
+  baseURL: "http://127.0.0.1:8000",
 });
-
-// Không sử dụng interceptors cho token để tránh lỗi khi không có login
 export default api;
+// KHÔNG thêm bất kỳ interceptors nào liên quan đến Authorization ở đây

@@ -142,31 +142,35 @@ services:
 ==============================
 FILE: .\main.py
 ==============================
+# FILE: backend/main.py
 import uvicorn
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.api import upload, chat, courses
-from backend.database.db_config import init_db
 
-app = FastAPI(title="AI Teaching Assistant System - No Auth Mode")
+# Chỉ import các api nghiệp vụ cơ bản
+from backend.api import upload, chat
 
+app = FastAPI(title="AI Teaching Assistant - NO AUTH MVP")
+
+# Cấu hình CORS cho Frontend (Port 5173)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Đăng ký Router (Đã bỏ auth)
-app.include_router(courses.router, prefix="/courses", tags=["Courses"])
+# --- ĐĂNG KÝ ROUTER ---
+# 1. Upload file (POST /upload/)
 app.include_router(upload.router, prefix="/upload", tags=["Upload"])
+
+# 2. Chat (POST /chat/query)
 app.include_router(chat.router, prefix="/chat", tags=["AI Chat"])
 
-@app.on_event("startup")
-def startup_event():
-    init_db()
-    print("🚀 Hệ thống đã sẵn sàng (CHẾ ĐỘ KHÔNG LOGIN)!")
+@app.get("/")
+def root():
+    return {"message": "System is running (NO AUTH MODE)"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
@@ -621,31 +625,35 @@ services:
 ==============================
 FILE: .\main.py
 ==============================
+# FILE: backend/main.py
 import uvicorn
-import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.api import upload, chat, courses
-from backend.database.db_config import init_db
 
-app = FastAPI(title="AI Teaching Assistant System - No Auth Mode")
+# Chỉ import các api nghiệp vụ cơ bản
+from backend.api import upload, chat
 
+app = FastAPI(title="AI Teaching Assistant - NO AUTH MVP")
+
+# Cấu hình CORS cho Frontend (Port 5173)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Đăng ký Router (Đã bỏ auth)
-app.include_router(courses.router, prefix="/courses", tags=["Courses"])
+# --- ĐĂNG KÝ ROUTER ---
+# 1. Upload file (POST /upload/)
 app.include_router(upload.router, prefix="/upload", tags=["Upload"])
+
+# 2. Chat (POST /chat/query)
 app.include_router(chat.router, prefix="/chat", tags=["AI Chat"])
 
-@app.on_event("startup")
-def startup_event():
-    init_db()
-    print("🚀 Hệ thống đã sẵn sàng (CHẾ ĐỘ KHÔNG LOGIN)!")
+@app.get("/")
+def root():
+    return {"message": "System is running (NO AUTH MODE)"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
@@ -945,124 +953,6 @@ FILE: .\package-lock.json
 }
 
 ==============================
-FILE: .\project_tree.txt
-==============================
-├── D:\ai-tro-giang/
-│   ├── bundle.py
-│   ├── check_imports.py
-│   ├── docker-compose.yml
-│   ├── Dockerfile
-│   ├── main.py
-│   ├── package-lock.json
-│   ├── package.json
-│   ├── project_code.txt
-│   ├── project_tree.txt
-│   ├── quick_test.py
-│   ├── README.md
-│   ├── requirements.txt
-│   ├── test.txt
-│   ├── backend/
-│   │   ├── __init__.py
-│   │   ├── agent/
-│   │   │   ├── prompt.py
-│   │   │   ├── qa.py
-│   │   │   ├── __init__.py
-│   │   ├── api/
-│   │   │   ├── auth.py
-│   │   │   ├── chat.py
-│   │   │   ├── courses.py
-│   │   │   ├── eval.py
-│   │   │   ├── pedagogy.py
-│   │   │   ├── upload.py
-│   │   │   ├── __init__.py
-│   │   ├── auth/
-│   │   │   ├── deps.py
-│   │   │   ├── roles.py
-│   │   │   ├── security.py
-│   │   │   ├── users.py
-│   │   ├── courses/
-│   │   │   ├── access.py
-│   │   │   ├── models.py
-│   │   │   ├── service.py
-│   │   │   ├── __init__.py
-│   │   ├── database/
-│   │   │   ├── db_config.py
-│   │   ├── eval/
-│   │   │   ├── dataset.json
-│   │   │   ├── datasets.py
-│   │   │   ├── evaluator.py
-│   │   │   ├── faithfulness.py
-│   │   │   ├── groundedness.py
-│   │   │   ├── metrics.py
-│   │   │   ├── runner.py
-│   │   │   ├── __init__.py
-│   │   ├── guardrails/
-│   │   │   ├── citation.py
-│   │   │   ├── grounding.py
-│   │   │   ├── rate_limit.py
-│   │   ├── llm/
-│   │   │   ├── llm.py
-│   │   │   ├── __init__.py
-│   │   ├── logging/
-│   │   │   ├── audit.py
-│   │   ├── pedagogy/
-│   │   │   ├── bloom.py
-│   │   │   ├── generator.py
-│   │   │   ├── prompts.py
-│   │   │   ├── rubric.py
-│   │   │   ├── schemas.py
-│   │   │   ├── templates.py
-│   │   │   ├── validators.py
-│   │   │   ├── __init__.py
-│   │   ├── rag/
-│   │   │   ├── hybrid_retriever.py
-│   │   │   ├── ingest.py
-│   │   │   ├── __init__.py
-│   │   ├── utils/
-│   │   │   ├── chunking.py
-│   │   │   ├── citation.py
-│   │   │   ├── text_extraction.py
-│   │   ├── vectorstore/
-│   │   │   ├── bm25_store.py
-│   │   │   ├── faiss_store.py
-│   ├── data/
-│   │   ├── app_database.db
-│   │   ├── audit.log
-│   │   ├── bm25_Ml101.pkl
-│   │   ├── bm25/
-│   │   ├── faiss_index/
-│   │   │   ├── .gitkeep
-│   │   │   ├── Ml101/
-│   │   │   │   ├── index.faiss
-│   │   │   │   ├── index.pkl
-│   │   ├── raw_docs/
-│   │   │   ├── .gitkeep
-│   │   │   ├── 694467e3464045b9803fbba62508179e.txt
-│   │   │   ├── 83dee78d344649c393659de375ce52e0.txt
-│   │   │   ├── project_export.txt
-│   │   ├── uploads/
-│   ├── frontend/
-│   │   ├── index.html
-│   │   ├── package-lock.json
-│   │   ├── package.json
-│   │   ├── vite.config.js
-│   │   ├── src/
-│   │   │   ├── App.jsx
-│   │   │   ├── main.jsx
-│   │   │   ├── api/
-│   │   │   │   ├── client.js
-│   │   │   ├── components/
-│   │   │   │   ├── ChatBox.jsx
-│   │   │   │   ├── FileUpload.jsx
-│   ├── tests/
-│   │   ├── conftest.py
-│   │   ├── test_eval.py
-│   │   ├── test_eval_pipeline.py
-│   │   ├── test_guardrails.py
-│   │   ├── test_rag_guardrail.py
-│   ├── uploads/
-│   │   ├── test_knowledge.txt
-==============================
 FILE: .\quick_test.py
 ==============================
 import os
@@ -1231,55 +1121,9 @@ FILE: .\backend\agent\__init__.py
 ==============================
 
 ==============================
-FILE: .\backend\api\auth.py
-==============================
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordRequestForm
-from backend.auth.users import get_user, verify_password
-from backend.auth.security import create_access_token
-from pydantic import BaseModel
-
-router = APIRouter()
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-@router.post("/login")
-async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
-    """
-    Hỗ trợ cả OAuth2 Form (Swagger) và JSON (Frontend)
-    """
-    username, password = None, None
-    
-    # Kiểm tra xem là JSON hay Form
-    content_type = request.headers.get("Content-Type", "")
-    if "application/json" in content_type:
-        data = await request.json()
-        username = data.get("username")
-        password = data.get("password")
-    else:
-        username = form_data.username
-        password = form_data.password
-
-    user = get_user(username)
-    if not user or not verify_password(password, user["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Tên đăng nhập hoặc mật khẩu không chính xác",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
-    
-    return {
-        "access_token": access_token, 
-        "token_type": "bearer",
-        "role": user["role"]
-    }
-==============================
 FILE: .\backend\api\chat.py
 ==============================
+# FILE: backend/api/chat.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from backend.agent.qa import answer_question
@@ -1287,17 +1131,19 @@ from backend.agent.qa import answer_question
 router = APIRouter()
 
 class ChatRequest(BaseModel):
-    course_id: str
     question: str
+    course_id: str = "ML101"  # Default value để tránh lỗi nếu thiếu
 
-@router.post("/")
-async def chat(request: ChatRequest):
+# SỬA: Đổi path thành "/query" để khớp với prefix "/chat" ở main.py
+# URL thực tế sẽ là: POST http://localhost:8000/chat/query
+@router.post("/query")
+async def chat_query(request: ChatRequest):
     try:
-        # Gọi trực tiếp không cần current_user
+        # Gọi logic RAG
         result = answer_question(request.question, request.course_id)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi xử lý chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 ==============================
 FILE: .\backend\api\courses.py
 ==============================
@@ -1341,136 +1187,38 @@ def generate():
 ==============================
 FILE: .\backend\api\upload.py
 ==============================
+from fastapi import APIRouter, File, UploadFile, Query
+import shutil
 import os
-import uuid
-from fastapi import APIRouter, UploadFile, File, HTTPException
 from backend.rag.ingest import ingest_document
 
 router = APIRouter()
 
-UPLOAD_DIR = "data/raw_docs"
+UPLOAD_DIR = "backend/data/raw_docs"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/")
-async def upload_document(course_id: str, file: UploadFile = File(...)):
-    if not os.path.exists(UPLOAD_DIR):
-        os.makedirs(UPLOAD_DIR)
-
-    # FIX: Tạo tên file duy nhất tránh ghi đè [cite: 20]
-    file_extension = os.path.splitext(file.filename)[1]
-    unique_filename = f"{uuid.uuid4().hex}{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+async def upload_file(
+    file: UploadFile = File(...), 
+    course_id: str = Query("ML101") # Fix: Thêm Query default để không bắt buộc
+):
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
     
-    try:
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-
-        # Ingest dữ liệu vào vector store theo course_id [cite: 24, 84]
-        ingest_document(file_path, course_id)
-
-        return {
-            "message": f"Upload thành công file {file.filename}",
-            "saved_as": unique_filename
-        }
-    except Exception as e:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(status_code=500, detail=str(e))
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Gọi hàm xử lý RAG
+    ingest_document(file_path, course_id)
+    
+    return {
+        "filename": file.filename, 
+        "course_id": course_id, 
+        "status": "ingested"
+    }
 ==============================
 FILE: .\backend\api\__init__.py
 ==============================
 
-==============================
-FILE: .\backend\auth\deps.py
-==============================
-from fastapi import Depends
-from backend.auth.users import USERS_DB
-
-# Mock user để các logic phía sau không bị crash
-DEFAULT_USER = USERS_DB["teacher1"]
-
-def get_current_user():
-    """Bypass hoàn toàn - Luôn trả về user mặc định"""
-    return DEFAULT_USER
-
-def require_teacher(current_user=Depends(get_current_user)):
-    """Bypass role check"""
-    return current_user
-
-def require_student(current_user=Depends(get_current_user)):
-    """Bypass role check"""
-    return current_user
-==============================
-FILE: .\backend\auth\roles.py
-==============================
-from enum import Enum
-
-class UserRole(str, Enum):
-    STUDENT = "student"
-    TEACHER = "teacher"
-
-==============================
-FILE: .\backend\auth\security.py
-==============================
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
-
-# Cấu hình cứng để dev local không bị invalid token khi restart
-SECRET_KEY = "DEV_SECRET_KEY_LOCAL_123"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 1440 # 24 giờ
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def verify_token(token: str):
-    """Giải mã token để lấy payload"""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload if payload.get("sub") else None
-    except JWTError:
-        return None
-==============================
-FILE: .\backend\auth\users.py
-==============================
-from passlib.context import CryptContext
-
-# Khởi tạo context: passlib tự xử lý encoding và salt chuẩn cho bcrypt
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """So sánh mật khẩu plaintext và mật khẩu đã hash"""
-    try:
-        return pwd_context.verify(plain_password, hashed_password)
-    except Exception:
-        return False
-
-def get_password_hash(password: str) -> str:
-    """Tạo hash mới cho mật khẩu"""
-    return pwd_context.hash(password)
-
-# MẬT KHẨU TEST LÀ: 123456
-# Hash này đã được tạo và kiểm tra bằng passlib
-CLEAN_HASH = "$2b$12$R9h/lIPzMZ7E22NVjtORV.p6zif6oUaQW.mHnc6vSOfKy8nS.E8S."
-
-USERS_DB = {
-    "teacher1": {
-        "username": "teacher1",
-        "password_hash": CLEAN_HASH,
-        "role": "teacher"
-    },
-    "student1": {
-        "username": "student1",
-        "password_hash": CLEAN_HASH,
-        "role": "student"
-    }
-}
-
-def get_user(username: str):
-    return USERS_DB.get(username.lower())
 ==============================
 FILE: .\backend\courses\access.py
 ==============================
@@ -2389,33 +2137,32 @@ def ingest_document(file_path: str, course_id: str):
     text = extract_text(file_path)
     file_name = os.path.basename(file_path)
 
-    # 2. Chia nhỏ văn bản (Sử dụng utils để có metadata chuẩn cho Eval) [cite: 78, 79]
+    # 2. Chia nhỏ văn bản
     docs = chunk_text(text, source_file=file_name)
 
-    # 3. Xử lý Vector Store (FAISS)
+    # 3. FAISS
     index_path = os.path.join("data", "faiss_index", course_id)
-    
+
     if os.path.exists(os.path.join(index_path, "index.faiss")):
         vector_store = FAISS.load_local(
-            index_path, 
-            embeddings_instance, 
+            index_path,
+            embeddings_instance,
             allow_dangerous_deserialization=True
         )
         vector_store.add_documents(docs)
     else:
         vector_store = FAISS.from_documents(docs, embeddings_instance)
 
-    if not os.path.exists(os.path.dirname(index_path)):
-        os.makedirs(os.path.dirname(index_path))
-    
+    os.makedirs(index_path, exist_ok=True)
     vector_store.save_local(index_path)
 
-    # 4. Xử lý Keyword Store (BM25) - Quan trọng để hybrid_search không lỗi [cite: 85, 87]
+    # 4. BM25
     bm25_store = BM25Store.load(course_id)
     bm25_store.add_documents(docs)
     bm25_store.save()
 
-    print(f"Thành công: Đã cập nhật FAISS và BM25 cho môn {course_id}")
+    print(f"✅ Ingest xong cho course {course_id}")
+
 ==============================
 FILE: .\backend\rag\__init__.py
 ==============================
@@ -2604,6 +2351,10 @@ def get_faiss_store(index_path: str):
             allow_dangerous_deserialization=True
         )
     return None
+==============================
+FILE: .\data\raw_docs\3816581988b745c5adab034455adf57d.txt
+==============================
+Thủ đô của Việt Nam là Hà Nội. Khóa học ML101 dạy về Machine Learning cơ bản.
 ==============================
 FILE: .\data\raw_docs\694467e3464045b9803fbba62508179e.txt
 ==============================
@@ -8432,31 +8183,31 @@ export default defineConfig({
 ==============================
 FILE: .\frontend\src\App.jsx
 ==============================
+// FILE: frontend/src/App.jsx
 import React from "react";
 import FileUpload from "./components/FileUpload";
 import ChatBox from "./components/ChatBox";
 
 export default function App() {
   return (
-    <div style={{ padding: "30px", fontFamily: "Segoe UI, Arial, sans-serif", maxWidth: "900px", margin: "0 auto" }}>
-      <header style={{ textAlign: "center", marginBottom: "40px" }}>
-        <h1 style={{ color: "#2c3e50" }}>AI TRỢ GIẢNG (DEMO MVP)</h1>
-        <p style={{ color: "#7f8c8d" }}>Hệ thống không yêu cầu đăng nhập - Sử dụng ngay</p>
-      </header>
+    <div style={{ maxWidth: "800px", margin: "0 auto", padding: "20px", fontFamily: "Arial" }}>
+      <h1 style={{ textAlign: "center", color: "#2c3e50" }}>
+        AI Trợ Giảng (Demo No Auth)
+      </h1>
+      
+      {/* 1. Khu vực Upload (Luôn hiển thị) */}
+      <section style={{ 
+        marginBottom: "30px", padding: "20px", 
+        border: "1px solid #ddd", borderRadius: "8px", 
+        backgroundColor: "#f9f9f9" 
+      }}>
+        <FileUpload />
+      </section>
 
-      <main>
-        {/* Phần Upload tài liệu - Luôn hiển thị cho mọi người dùng */}
-        <section style={{ marginBottom: "50px" }}>
-          <FileUpload />
-        </section>
-
-        <hr style={{ border: "0", borderTop: "1px solid #eee", margin: "40px 0" }} />
-
-        {/* Phần Chat AI */}
-        <section>
-          <ChatBox />
-        </section>
-      </main>
+      {/* 2. Khu vực Chat (Luôn hiển thị) */}
+      <section>
+        <ChatBox />
+      </section>
     </div>
   );
 }
@@ -8474,147 +8225,106 @@ FILE: .\frontend\src\api\client.js
 ==============================
 import axios from "axios";
 
-// Cấu hình Base URL cho Backend
+// Khởi tạo axios instance cơ bản nhất
 export const api = axios.create({
-  baseURL: "http://127.0.0.1:8000"
+  baseURL: "http://127.0.0.1:8000",
 });
 
-[cite_start]// Đã gỡ bỏ logic setToken/Authorization Header [cite: 152, 153]
+// KHÔNG thêm bất kỳ interceptors nào liên quan đến Authorization ở đây
 ==============================
 FILE: .\frontend\src\components\ChatBox.jsx
 ==============================
-import React, { useState } from "react";
+// FILE: frontend/src/components/ChatBox.jsx
+import React, { useState } from 'react';
+import { api } from '../api'; // Hoặc import axios trực tiếp nếu chưa config api
 
-export default function ChatBox() {
+const ChatBox = () => {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
-  const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const ask = async () => {
+  const handleSend = async () => {
     if (!question.trim()) return;
-    
     setLoading(true);
+    setAnswer("");
+
     try {
-      [cite_start]// Gọi trực tiếp endpoint chat (Đã bỏ fetch auth) [cite: 161]
-      const res = await fetch("http://localhost:8000/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+      // FIX: Gọi đúng POST /chat/query
+      // Đảm bảo baseURL là http://localhost:8000
+      const res = await api.post("/chat/query", {
+        question: question,
+        course_id: "ML101" 
       });
-      
-      const data = await res.json();
-      setAnswer(data.answer);
-      setSources(data.sources || []);
-    } catch (error) {
-      setAnswer("Lỗi kết nối đến máy chủ AI.");
+
+      setAnswer(res.data.answer);
+    } catch (err) {
+      console.error(err);
+      setAnswer("Lỗi kết nối server!");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ marginTop: "20px" }}>
-      <h3>💬 Hỏi đáp với AI</h3>
+    <div style={{ border: "1px solid #ccc", padding: "20px", borderRadius: "8px" }}>
+      <h3>Hỏi đáp AI</h3>
       <textarea 
-        value={question} 
-        onChange={(e) => setQuestion(e.target.value)} 
-        placeholder="Nhập câu hỏi từ tài liệu đã upload..."
-        rows={4} 
-        style={{ width: "100%", padding: "10px", borderRadius: "4px", border: "1px solid #ccc" }} 
+        style={{ width: "100%", padding: "10px", marginBottom: "10px" }}
+        rows={3}
+        value={question}
+        onChange={(e) => setQuestion(e.target.value)}
+        placeholder="Nhập câu hỏi..."
       />
-      <button 
-        onClick={ask} 
-        disabled={loading}
-        style={{ marginTop: "10px", padding: "10px 25px", backgroundColor: "#2ecc71", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-      >
+      <button onClick={handleSend} disabled={loading} style={{ padding: "10px 20px" }}>
         {loading ? "Đang suy nghĩ..." : "Gửi câu hỏi"}
       </button>
-
+      
       {answer && (
-        <div style={{ marginTop: "30px", padding: "20px", backgroundColor: "#fff", borderLeft: "5px solid #2ecc71", boxShadow: "0 2px 5px rgba(0,0,0,0.1)" }}>
-          <h4 style={{ marginTop: 0 }}>Trả lời:</h4>
-          <p style={{ whiteSpace: "pre-wrap", lineHeight: "1.6" }}>{answer}</p>
-          
-          {sources.length > 0 && (
-            <div style={{ marginTop: "20px", fontSize: "0.85rem" }}>
-              <p><strong>Nguồn tham khảo:</strong></p>
-              <ul style={{ paddingLeft: "20px" }}>
-                {sources.map((s, idx) => (
-                  <li key={idx}>
-                    {s.source_file} {s.page !== null ? `- Trang ${s.page}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+        <div style={{ marginTop: "20px", padding: "10px", background: "#eef" }}>
+          <strong>Trả lời:</strong>
+          <p style={{ whiteSpace: "pre-wrap" }}>{answer}</p>
         </div>
       )}
     </div>
   );
-}
+};
+
+export default ChatBox;
 ==============================
 FILE: .\frontend\src\components\FileUpload.jsx
 ==============================
-import React, { useState } from "react";
-// FIX: Import trực tiếp từ file client.js thay vì folder api
-import api from "../api/client"; 
+import React, { useState } from 'react';
+import api from '../api/client';
 
 const FileUpload = () => {
-    const [selectedFile, setSelectedFile] = useState(null);
-    const [courseId, setCourseId] = useState("");
-    const [loading, setLoading] = useState(false);
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-    const handleFileChange = (e) => {
-        setSelectedFile(e.target.files[0]);
-    };
+  const handleUpload = async () => {
+    if (!file) return alert("Chọn file!");
+    const formData = new FormData();
+    formData.append('file', file);
 
-    const handleUpload = async () => {
-        if (!selectedFile || !courseId) {
-            alert("Vui lòng chọn file và nhập Course ID");
-            return;
-        }
+    setLoading(true);
+    try {
+      await api.post('/upload/', formData, {
+        params: { course_id: 'ML101' },
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      alert("Upload thành công!");
+    } catch (error) {
+      alert("Lỗi upload: " + (error.response?.data?.detail || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        setLoading(true);
-        const formData = new FormData();
-        formData.append("file", selectedFile);
-
-        try {
-            // Upload endpoint dựa trên router backend
-            await api.post(`/upload/?course_id=${courseId}`, formData, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
-            alert("Upload và Ingest thành công!");
-        } catch (error) {
-            console.error("Lỗi upload:", error);
-            alert("Lỗi: " + (error.response?.data?.detail || "Không kết nối được server"));
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div style={{ padding: "20px", border: "1px solid #ccc", marginBottom: "20px", borderRadius: "8px" }}>
-            <h3>📤 Upload Tài Liệu</h3>
-            <div style={{ marginBottom: "10px" }}>
-                <input
-                    type="text"
-                    placeholder="Nhập Course ID (vd: ML101)"
-                    value={courseId}
-                    onChange={(e) => setCourseId(e.target.value)}
-                    style={{ padding: "8px", width: "200px" }}
-                />
-            </div>
-            <input type="file" onChange={handleFileChange} accept=".txt,.pdf,.docx" />
-            <button 
-                onClick={handleUpload} 
-                disabled={loading}
-                style={{ marginLeft: "10px", padding: "8px 16px", cursor: "pointer" }}
-            >
-                {loading ? "Đang xử lý..." : "Tải lên & Ingest"}
-            </button>
-        </div>
-    );
+  return (
+    <div>
+      <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+      <button onClick={handleUpload} disabled={loading}>Upload & Ingest</button>
+    </div>
+  );
 };
 
 export default FileUpload;

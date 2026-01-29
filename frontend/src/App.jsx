@@ -1,31 +1,28 @@
-import React from 'react';
-import FileUpload from './components/FileUpload';
-import ChatBox from './components/ChatBox';
+// FILE: frontend/src/App.jsx
+import React from "react";
+import FileUpload from "./components/FileUpload";
+import ChatBox from "./components/ChatBox";
 
-function App() {
-  // KHÔNG thêm logic kiểm tra isAuth hay Redirect ở đây
+export default function App() {
   return (
-    <div style={{ 
-      maxWidth: '900px', 
-      margin: '40px auto', 
-      padding: '0 20px',
-      fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif' 
-    }}>
-      <header style={{ textAlign: 'center', marginBottom: '40px' }}>
-        <h1 style={{ color: '#2c3e50' }}>AI Teaching Assistant - MVP</h1>
-        <p>Tải tài liệu lên và bắt đầu đặt câu hỏi</p>
-      </header>
-
-      <main>
+    <div style={{ maxWidth: "800px", margin: "0 auto", padding: "20px", fontFamily: "Arial" }}>
+      <h1 style={{ textAlign: "center", color: "#2c3e50" }}>
+        AI Trợ Giảng (Demo No Auth)
+      </h1>
+      
+      {/* 1. Khu vực Upload (Luôn hiển thị) */}
+      <section style={{ 
+        marginBottom: "30px", padding: "20px", 
+        border: "1px solid #ddd", borderRadius: "8px", 
+        backgroundColor: "#f9f9f9" 
+      }}>
         <FileUpload />
-        <ChatBox />
-      </main>
+      </section>
 
-      <footer style={{ marginTop: '50px', textAlign: 'center', color: '#888', fontSize: '0.8em' }}>
-        Chế độ Demo: Không yêu cầu đăng nhập.
-      </footer>
+      {/* 2. Khu vực Chat (Luôn hiển thị) */}
+      <section>
+        <ChatBox />
+      </section>
     </div>
   );
 }
-
-export default App;

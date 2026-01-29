@@ -10,30 +10,28 @@ def ingest_document(file_path: str, course_id: str):
     text = extract_text(file_path)
     file_name = os.path.basename(file_path)
 
-    # 2. Chia nhỏ văn bản (Sử dụng utils để có metadata chuẩn cho Eval) [cite: 78, 79]
+    # 2. Chia nhỏ văn bản
     docs = chunk_text(text, source_file=file_name)
 
-    # 3. Xử lý Vector Store (FAISS)
+    # 3. FAISS
     index_path = os.path.join("data", "faiss_index", course_id)
-    
+
     if os.path.exists(os.path.join(index_path, "index.faiss")):
         vector_store = FAISS.load_local(
-            index_path, 
-            embeddings_instance, 
+            index_path,
+            embeddings_instance,
             allow_dangerous_deserialization=True
         )
         vector_store.add_documents(docs)
     else:
         vector_store = FAISS.from_documents(docs, embeddings_instance)
 
-    if not os.path.exists(os.path.dirname(index_path)):
-        os.makedirs(os.path.dirname(index_path))
-    
+    os.makedirs(index_path, exist_ok=True)
     vector_store.save_local(index_path)
 
-    # 4. Xử lý Keyword Store (BM25) - Quan trọng để hybrid_search không lỗi [cite: 85, 87]
+    # 4. BM25
     bm25_store = BM25Store.load(course_id)
     bm25_store.add_documents(docs)
     bm25_store.save()
 
-    print(f"Thành công: Đã cập nhật FAISS và BM25 cho môn {course_id}")
+    print(f"✅ Ingest xong cho course {course_id}")

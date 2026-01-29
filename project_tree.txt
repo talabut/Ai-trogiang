@@ -7,7 +7,6 @@
 │   ├── package-lock.json
 │   ├── package.json
 │   ├── project_code.txt
-│   ├── project_tree.txt
 │   ├── quick_test.py
 │   ├── README.md
 │   ├── requirements.txt
@@ -19,18 +18,12 @@
 │   │   │   ├── qa.py
 │   │   │   ├── __init__.py
 │   │   ├── api/
-│   │   │   ├── auth.py
 │   │   │   ├── chat.py
 │   │   │   ├── courses.py
 │   │   │   ├── eval.py
 │   │   │   ├── pedagogy.py
 │   │   │   ├── upload.py
 │   │   │   ├── __init__.py
-│   │   ├── auth/
-│   │   │   ├── deps.py
-│   │   │   ├── roles.py
-│   │   │   ├── security.py
-│   │   │   ├── users.py
 │   │   ├── courses/
 │   │   │   ├── access.py
 │   │   │   ├── models.py
@@ -88,6 +81,7 @@
 │   │   │   │   ├── index.pkl
 │   │   ├── raw_docs/
 │   │   │   ├── .gitkeep
+│   │   │   ├── 3816581988b745c5adab034455adf57d.txt
 │   │   │   ├── 694467e3464045b9803fbba62508179e.txt
 │   │   │   ├── 83dee78d344649c393659de375ce52e0.txt
 │   │   │   ├── project_export.txt
