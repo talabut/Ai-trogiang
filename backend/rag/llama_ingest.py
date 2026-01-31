@@ -52,6 +52,12 @@ def get_or_create_index(course_id: str, vector_dim: int = 384) -> VectorStoreInd
     )
     return index
 
+# FIX: Implement get_llama_retriever để module retrieval gọi
+def get_llama_retriever(course_id: str, top_k: int = 10):
+    """Helper để lấy retriever từ index đã persist"""
+    index = get_or_create_index(course_id)
+    return index.as_retriever(similarity_top_k=top_k)
+
 def ingest_canonical_chunks(
     chunks: List[dict], 
     course_id: str, 
@@ -74,10 +80,8 @@ def ingest_canonical_chunks(
     index = get_or_create_index(course_id)
     
     # 3. Deduplication Logic (Strict Check)
-    # Check against keys in DocStore (since node.id_ is set to content_hash)
     existing_hashes: Set[str] = set()
     try:
-        # This gets all keys in the docstore. For MVP/medium data, this is acceptable.
         for node_id in index.docstore.docs.keys():
             existing_hashes.add(node_id)
     except Exception:
@@ -92,7 +96,7 @@ def ingest_canonical_chunks(
             continue
         
         nodes_to_insert.append(node)
-        existing_hashes.add(node.node_id) # Add to local set for batch dedup
+        existing_hashes.add(node.node_id) 
 
     if skipped_count > 0:
         print(f"🔎 Dedup check: Skipped {skipped_count} duplicate chunks.")

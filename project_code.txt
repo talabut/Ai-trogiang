@@ -102,31 +102,6 @@ if __name__ == "__main__":
     main()
 
 ==============================
-FILE: .\check_imports.py
-==============================
-import pkgutil
-import importlib
-import traceback
-
-BASE_PACKAGE = "backend"
-
-errors = []
-
-for module in pkgutil.walk_packages([BASE_PACKAGE], BASE_PACKAGE + "."):
-    name = module.name
-    try:
-        importlib.import_module(name)
-    except Exception as e:
-        errors.append((name, e))
-
-print("\n====== IMPORT ERRORS ======")
-for name, err in errors:
-    print(f"\n❌ {name}")
-    traceback.print_exception(type(err), err, err.__traceback__)
-
-print(f"\nTotal errors: {len(errors)}")
-
-==============================
 FILE: .\docker-compose.yml
 ==============================
 version: "3.9"
@@ -483,527 +458,6 @@ FILE: .\project_code.txt
 ==============================
 
 ==============================
-FILE: .\bundle.py
-==============================
-import os
-
-# ====== CẤU HÌNH ======
-CODE_OUTPUT_FILE = "project_code.txt"
-TREE_OUTPUT_FILE = "project_tree.txt"
-
-# Extension được phép xuất nội dung
-ALLOWED_EXTENSIONS = {
-    ".py", ".jsx", ".js", ".css", ".html",
-    ".json", ".yml", ".yaml", ".md", ".txt"
-}
-
-# Thư mục loại trừ hoàn toàn
-EXCLUDE_DIRS = {
-    "venv",
-    "node_modules",
-    ".git",
-    "__pycache__",
-    ".pytest_cache",
-    "dist",
-    "build",
-}
-
-# File loại trừ
-EXCLUDE_FILES = {
-    ".DS_Store",
-    ".gitignore",
-}
-
-# =====================
-
-
-def should_exclude_file(filename: str) -> bool:
-    if filename in EXCLUDE_FILES:
-        return True
-    if filename.startswith(".env"):
-        return True
-    return False
-
-
-def export_project_code():
-    with open(CODE_OUTPUT_FILE, "w", encoding="utf-8") as outfile:
-        for root, dirs, files in os.walk("."):
-            # Loại thư mục rác đúng cách
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-
-            for file in files:
-                if should_exclude_file(file):
-                    continue
-
-                if any(file.endswith(ext) for ext in ALLOWED_EXTENSIONS):
-                    full_path = os.path.join(root, file)
-
-                    outfile.write("\n" + "=" * 30 + "\n")
-                    outfile.write(f"FILE: {full_path}\n")
-                    outfile.write("=" * 30 + "\n")
-
-                    try:
-                        with open(full_path, "r", encoding="utf-8", errors="ignore") as infile:
-                            outfile.write(infile.read())
-                    except Exception as e:
-                        outfile.write(f"\n[ERROR READING FILE]: {e}\n")
-
-    print(f"✅ Đã xuất toàn bộ code + config vào: {CODE_OUTPUT_FILE}")
-
-
-def export_project_tree():
-    lines = []
-
-    for root, dirs, files in os.walk("."):
-        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-
-        level = root.replace(".", "").count(os.sep)
-        indent = "│   " * level
-
-        folder_name = os.path.basename(root) if root != "." else os.path.abspath(".")
-        lines.append(f"{indent}├── {folder_name}/")
-
-        sub_indent = "│   " * (level + 1)
-        for file in files:
-            if should_exclude_file(file):
-                continue
-            lines.append(f"{sub_indent}├── {file}")
-
-    with open(TREE_OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-
-    print(f"✅ Đã xuất cây thư mục (đã lọc) vào: {TREE_OUTPUT_FILE}")
-
-
-def main():
-    export_project_code()
-    export_project_tree()
-    print("\n🎉 Hoàn tất: đã tạo 2 file (CODE + TREE)")
-
-
-if __name__ == "__main__":
-    main()
-
-==============================
-FILE: .\check_imports.py
-==============================
-import pkgutil
-import importlib
-import traceback
-
-BASE_PACKAGE = "backend"
-
-errors = []
-
-for module in pkgutil.walk_packages([BASE_PACKAGE], BASE_PACKAGE + "."):
-    name = module.name
-    try:
-        importlib.import_module(name)
-    except Exception as e:
-        errors.append((name, e))
-
-print("\n====== IMPORT ERRORS ======")
-for name, err in errors:
-    print(f"\n❌ {name}")
-    traceback.print_exception(type(err), err, err.__traceback__)
-
-print(f"\nTotal errors: {len(errors)}")
-
-==============================
-FILE: .\docker-compose.yml
-==============================
-version: "3.9"
-
-services:
-  backend:
-    build: .
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/data
-
-==============================
-FILE: .\main.py
-==============================
-# FILE: backend/main.py
-import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-# Chỉ import các api nghiệp vụ cơ bản
-from backend.api import upload, chat
-
-app = FastAPI(title="AI Teaching Assistant - NO AUTH MVP")
-
-# Cấu hình CORS cho Frontend (Port 5173)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- ĐĂNG KÝ ROUTER ---
-# 1. Upload file (POST /upload/)
-app.include_router(upload.router, prefix="/upload", tags=["Upload"])
-
-# 2. Chat (POST /chat/query)
-app.include_router(chat.router, prefix="/chat", tags=["AI Chat"])
-
-@app.get("/")
-def root():
-    return {"message": "System is running (NO AUTH MODE)"}
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-==============================
-FILE: .\package-lock.json
-==============================
-{
-  "name": "ai-tro-giang",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
-    "": {
-      "dependencies": {
-        "axios": "^1.13.4"
-      }
-    },
-    "node_modules/asynckit": {
-      "version": "0.4.0",
-      "resolved": "https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz",
-      "integrity": "sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==",
-      "license": "MIT"
-    },
-    "node_modules/axios": {
-      "version": "1.13.4",
-      "resolved": "https://registry.npmjs.org/axios/-/axios-1.13.4.tgz",
-      "integrity": "sha512-1wVkUaAO6WyaYtCkcYCOx12ZgpGf9Zif+qXa4n+oYzK558YryKqiL6UWwd5DqiH3VRW0GYhTZQ/vlgJrCoNQlg==",
-      "license": "MIT",
-      "dependencies": {
-        "follow-redirects": "^1.15.6",
-        "form-data": "^4.0.4",
-        "proxy-from-env": "^1.1.0"
-      }
-    },
-    "node_modules/call-bind-apply-helpers": {
-      "version": "1.0.2",
-      "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
-      "integrity": "sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==",
-      "license": "MIT",
-      "dependencies": {
-        "es-errors": "^1.3.0",
-        "function-bind": "^1.1.2"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/combined-stream": {
-      "version": "1.0.8",
-      "resolved": "https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz",
-      "integrity": "sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==",
-      "license": "MIT",
-      "dependencies": {
-        "delayed-stream": "~1.0.0"
-      },
-      "engines": {
-        "node": ">= 0.8"
-      }
-    },
-    "node_modules/delayed-stream": {
-      "version": "1.0.0",
-      "resolved": "https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz",
-      "integrity": "sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==",
-      "license": "MIT",
-      "engines": {
-        "node": ">=0.4.0"
-      }
-    },
-    "node_modules/dunder-proto": {
-      "version": "1.0.1",
-      "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
-      "integrity": "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==",
-      "license": "MIT",
-      "dependencies": {
-        "call-bind-apply-helpers": "^1.0.1",
-        "es-errors": "^1.3.0",
-        "gopd": "^1.2.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-define-property": {
-      "version": "1.0.1",
-      "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
-      "integrity": "sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-errors": {
-      "version": "1.3.0",
-      "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
-      "integrity": "sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-object-atoms": {
-      "version": "1.1.1",
-      "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz",
-      "integrity": "sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==",
-      "license": "MIT",
-      "dependencies": {
-        "es-errors": "^1.3.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/es-set-tostringtag": {
-      "version": "2.1.0",
-      "resolved": "https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz",
-      "integrity": "sha512-j6vWzfrGVfyXxge+O0x5sh6cvxAog0a/4Rdd2K36zCMV5eJ+/+tOAngRO8cODMNWbVRdVlmGZQL2YS3yR8bIUA==",
-      "license": "MIT",
-      "dependencies": {
-        "es-errors": "^1.3.0",
-        "get-intrinsic": "^1.2.6",
-        "has-tostringtag": "^1.0.2",
-        "hasown": "^2.0.2"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/follow-redirects": {
-      "version": "1.15.11",
-      "resolved": "https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.15.11.tgz",
-      "integrity": "sha512-deG2P0JfjrTxl50XGCDyfI97ZGVCxIpfKYmfyrQ54n5FO/0gfIES8C/Psl6kWVDolizcaaxZJnTS0QSMxvnsBQ==",
-      "funding": [
-        {
-          "type": "individual",
-          "url": "https://github.com/sponsors/RubenVerborgh"
-        }
-      ],
-      "license": "MIT",
-      "engines": {
-        "node": ">=4.0"
-      },
-      "peerDependenciesMeta": {
-        "debug": {
-          "optional": true
-        }
-      }
-    },
-    "node_modules/form-data": {
-      "version": "4.0.5",
-      "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.5.tgz",
-      "integrity": "sha512-8RipRLol37bNs2bhoV67fiTEvdTrbMUYcFTiy3+wuuOnUog2QBHCZWXDRijWQfAkhBj2Uf5UnVaiWwA5vdd82w==",
-      "license": "MIT",
-      "dependencies": {
-        "asynckit": "^0.4.0",
-        "combined-stream": "^1.0.8",
-        "es-set-tostringtag": "^2.1.0",
-        "hasown": "^2.0.2",
-        "mime-types": "^2.1.12"
-      },
-      "engines": {
-        "node": ">= 6"
-      }
-    },
-    "node_modules/function-bind": {
-      "version": "1.1.2",
-      "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
-      "integrity": "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==",
-      "license": "MIT",
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/get-intrinsic": {
-      "version": "1.3.0",
-      "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
-      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
-      "license": "MIT",
-      "dependencies": {
-        "call-bind-apply-helpers": "^1.0.2",
-        "es-define-property": "^1.0.1",
-        "es-errors": "^1.3.0",
-        "es-object-atoms": "^1.1.1",
-        "function-bind": "^1.1.2",
-        "get-proto": "^1.0.1",
-        "gopd": "^1.2.0",
-        "has-symbols": "^1.1.0",
-        "hasown": "^2.0.2",
-        "math-intrinsics": "^1.1.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/get-proto": {
-      "version": "1.0.1",
-      "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
-      "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
-      "license": "MIT",
-      "dependencies": {
-        "dunder-proto": "^1.0.1",
-        "es-object-atoms": "^1.0.0"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/gopd": {
-      "version": "1.2.0",
-      "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
-      "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/has-symbols": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
-      "integrity": "sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/has-tostringtag": {
-      "version": "1.0.2",
-      "resolved": "https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz",
-      "integrity": "sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==",
-      "license": "MIT",
-      "dependencies": {
-        "has-symbols": "^1.0.3"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      },
-      "funding": {
-        "url": "https://github.com/sponsors/ljharb"
-      }
-    },
-    "node_modules/hasown": {
-      "version": "2.0.2",
-      "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz",
-      "integrity": "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==",
-      "license": "MIT",
-      "dependencies": {
-        "function-bind": "^1.1.2"
-      },
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/math-intrinsics": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
-      "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.4"
-      }
-    },
-    "node_modules/mime-db": {
-      "version": "1.52.0",
-      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
-      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
-      "license": "MIT",
-      "engines": {
-        "node": ">= 0.6"
-      }
-    },
-    "node_modules/mime-types": {
-      "version": "2.1.35",
-      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
-      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
-      "license": "MIT",
-      "dependencies": {
-        "mime-db": "1.52.0"
-      },
-      "engines": {
-        "node": ">= 0.6"
-      }
-    },
-    "node_modules/proxy-from-env": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-1.1.0.tgz",
-      "integrity": "sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==",
-      "license": "MIT"
-    }
-  }
-}
-
-==============================
-FILE: .\quick_test.py
-==============================
-import os
-import sys
-from pathlib import Path
-
-# Đảm bảo Python tìm thấy module backend
-sys.path.append(str(Path(__file__).parent))
-
-def setup_and_test():
-    print("🚀 Bắt đầu kiểm tra hệ thống...")
-
-    # 1. Tạo các thư mục cần thiết
-    folders = ["data/faiss_index", "data/bm25", "uploads"]
-    for f in folders:
-        os.makedirs(f, exist_ok=True)
-        print(f"✅ Đã tạo/kiểm tra thư mục: {f}")
-
-    # 2. Tạo file dữ liệu mẫu để test
-    sample_file = "uploads/test_knowledge.txt"
-    with open(sample_file, "w", encoding="utf-8") as f:
-        f.write("Thủ đô của Việt Nam là Hà Nội. Khóa học ML101 dạy về Machine Learning cơ bản.")
-    print(f"✅ Đã tạo file dữ liệu mẫu: {sample_file}")
-
-    # 3. Test Ingest
-    print("📥 Đang nạp dữ liệu vào Vector DB...")
-    from backend.rag.ingest import ingest_document
-    try:
-        ingest_document(sample_file, "ML101")
-        print("✅ Ingest thành công!")
-    except Exception as e:
-        print(f"❌ Lỗi Ingest: {e}")
-        return
-
-    # 4. Test Query
-    print("🔍 Đang thử hỏi AI...")
-    from backend.agent.qa import answer_question
-    result = answer_question("Thủ đô của Việt Nam là gì?", "ML101")
-    
-    print("\n--- KẾT QUẢ TEST ---")
-    print(f"Câu hỏi: Thủ đô của Việt Nam là gì?")
-    print(f"AI trả lời: {result['answer']}")
-    if result['sources']:
-        print(f"Nguồn tìm thấy: {len(result['sources'])} đoạn văn.")
-        print("🎉 HỆ THỐNG ĐÃ SẴN SÀNG!")
-    else:
-        print("⚠️ AI trả lời nhưng không tìm thấy nguồn. Kiểm tra lại hybrid_retriever.")
-
-if __name__ == "__main__":
-    setup_and_test()
-==============================
 FILE: .\README.md
 ==============================
 # AI Trợ Giảng (RAG-based Tutor Assistant)
@@ -1067,129 +521,75 @@ llama-index-embeddings-huggingface
 llama-index-vector-stores-faiss
 llama-index-readers-file
 ==============================
-FILE: .\test.txt
-==============================
-Học máy là một lĩnh vực của trí tuệ nhân tạo.
-
-==============================
 FILE: .\backend\__init__.py
 ==============================
 
 ==============================
-FILE: .\backend\agent\prompt.py
-==============================
-SYSTEM_PROMPT = """
-Bạn là AI trợ giảng học thuật.
-
-Quy tắc bắt buộc:
-- Chỉ trả lời dựa trên nội dung tài liệu được cung cấp.
-- Nếu không tìm thấy thông tin trong tài liệu, hãy trả lời: 
-  "Tôi không tìm thấy thông tin trong tài liệu."
-- Không được suy đoán hoặc bịa.
-- Trả lời ngắn gọn, đúng trọng tâm.
-"""
-
-==============================
 FILE: .\backend\agent\qa.py
 ==============================
-from typing import Dict, Any, List
-import json
-from backend.rag.hybrid_retriever import hybrid_search
-from backend.llm.llm import get_llm
+from typing import Dict, Any
+from backend.rag.retrieval import hybrid_search
 
 # --- CONFIGURATION ---
-THRESHOLD = 0.05 # Strict threshold after normalization/fusion
+# Ngưỡng đã được xử lý bên trong hybrid_search (Source 133), 
+# nhưng ta giữ check an toàn ở đây.
+STRICT_REFUSAL_TEXT = "Tôi không tìm thấy thông tin phù hợp trong tài liệu được cung cấp."
 
 def answer_question(question: str, course_id: str) -> Dict[str, Any]:
     """
-    Generates answer with strict citations using Hybrid RAG.
+    AI AGENT (STRICT – RETRIEVE ONLY)
+    Logic:
+    1. Retrieve via Hybrid Search (Vector + BM25).
+    2. Refuse if empty.
+    3. Return Context + Strict Citation.
     """
     
-    # 1. Retrieval (Hybrid)
-    results = hybrid_search(question, course_id)
+    # [cite_start]1. Retrieval (Hybrid) [cite: 134]
+    # Tool duy nhất được phép sử dụng
+    results = hybrid_search(query=question, course_id=course_id)
     
-    # 2. Refusal Logic (Step 6)
-    if not results or results[0]["final_score"] < THRESHOLD:
+    # 2. Refusal Logic (Refuse if context empty)
+    if not results:
         return {
-            "answer": "Tôi không tìm thấy thông tin phù hợp trong tài liệu đã cung cấp để trả lời câu hỏi này.",
+            "answer": STRICT_REFUSAL_TEXT,
             "citations": []
         }
 
-    # 3. Context Assembly (Step 4)
-    # Build context string with strict metadata markers
-    context_str = ""
-    valid_citations = []
-    
-    for i, item in enumerate(results):
-        meta = item["metadata"]
-        text = item["text"]
-        
-        # Safe get metadata for citation
-        doc_id = meta.get("doc_id", "Unknown")
-        file_name = meta.get("file_name", "Unknown")
-        page = meta.get("page", "N/A")
-        line_start =Hz = meta.get("line_start", "?")
-        line_end = meta.get("line_end", "?")
-        
-        # Marker for LLM reference
-        marker_id = f"REF_{i+1}"
-        
-        context_str += f"\n--- [{marker_id}] (File: {file_name}, Page: {page}, Lines: {line_start}-{line_end}) ---\n"
-        context_str += f"{text}\n"
+    # 3. Answer Construction (No LLM - Deterministic)
+    # Ghép các đoạn context tìm được thành câu trả lời
+    answers_text = []
+    final_citations = []
 
-        valid_citations.append({
-            "ref_id": marker_id,
-            "doc_id": doc_id,
+    for item in results:
+        # [cite_start]Extract Metadata [cite: 139]
+        file_name = item.get("file_name", "Unknown")
+        page = item.get("page", "N/A")
+        line_start = item.get("line_start", "?")
+        line_end = item.get("line_end", "?")
+        score = item.get("final_score", 0.0)
+
+        # Format Text Block
+        chunk_text = item.get("text", "").strip()
+        citation_line = f"(Nguồn: {file_name}, trang {page}, dòng {line_start}-{line_end})"
+        
+        # Combine Text + Citation
+        answers_text.append(f"{chunk_text}\n{citation_line}")
+
+        # Structure for Frontend
+        final_citations.append({
+            "doc_id": item.get("doc_id"),
+            "file_name": file_name,
             "page": page,
             "line_start": line_start,
             "line_end": line_end,
-            "file_name": file_name,
-            "score": round(item["final_score"], 4)
+            "score": round(score, 4)
         })
 
-    # 4. Prompt Engineering (Step 5)
-    prompt = f"""
-Bạn là AI Trợ Giảng học thuật nghiêm túc.
-Nhiệm vụ: Trả lời câu hỏi dựa trên các đoạn văn bản (Context) được cung cấp dưới đây.
-
-QUY TẮC BẮT BUỘC:
-1. Chỉ sử dụng thông tin có trong Context. KHÔNG bịa đặt, KHÔNG dùng kiến thức ngoài.
-2. Nếu Context không đủ thông tin để trả lời câu hỏi, hãy nói "Tôi không tìm thấy thông tin trong tài liệu."
-3. Khi trích dẫn thông tin, hãy ghi chú nguồn (ví dụ: Theo tài liệu [REF_1]...).
-
-CONTEXT:
-{context_str}
-
-CÂU HỎI: 
-{question}
-
-TRẢ LỜI:
-"""
-
-    # 5. Call LLM
-    llm = get_llm()
-    # Note: The LocalMockLLM in current codebase parses regex "Ngữ cảnh tài liệu:". 
-    # Since we changed the prompt format, we might need to update llm.py OR adapt the prompt to match regex.
-    # To be safe with existing llm.py regex , let's add the specific marker it looks for:
-    
-    safe_prompt = f"Ngữ cảnh tài liệu:\n{context_str}\nCâu hỏi người dùng:\n{question}"
-    
-    raw_answer = llm.invoke(safe_prompt)
-
-    # 6. Final Output Construction
-    # We clean up the citation list to match the requirement schema
-    final_citations = []
-    for c in valid_citations:
-        final_citations.append({
-            "doc_id": c["doc_id"],
-            "page": c["page"],
-            "line_start": c["line_start"],
-            "line_end": c["line_end"],
-            "file_name": c["file_name"]
-        })
+    # Join all chunks with double newline
+    final_response = "\n\n".join(answers_text)
 
     return {
-        "answer": raw_answer,
+        "answer": final_response,
         "citations": final_citations
     }
 ==============================
@@ -1230,7 +630,8 @@ from pathlib import Path
 
 from backend.utils.text_extraction import extract_text
 from backend.rag.canonicalize import canonicalize_pages
-from backend.rag.chunking import chunk_canonical_pages
+# FIX: Import đúng tên hàm từ chunking.py
+from backend.rag.chunking import chunk_canonical_data
 from backend.rag.llama_ingest import ingest_canonical_chunks
 
 router = APIRouter()
@@ -1248,7 +649,7 @@ async def upload_file(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # 2. Extract raw pages
+    # 2. Extract raw pages (Force OCR logic nằm trong utils)
     # EXPECT: List[Dict] [{page_num, text, ...}]
     raw_pages = extract_text(file_path)
 
@@ -1257,7 +658,8 @@ async def upload_file(
 
     # 4. Chunking
     doc_id = Path(file.filename).stem
-    chunks = chunk_canonical_pages(canonical_pages)
+    # FIX: Truyền thêm doc_id vào hàm chunking
+    chunks = chunk_canonical_data(canonical_pages, doc_id)
 
     # 5. Ingest into LlamaIndex
     ingest_canonical_chunks(
@@ -1274,75 +676,8 @@ async def upload_file(
         "chunks": len(chunks),
         "status": "uploaded_and_ingested"
     }
-
 ==============================
 FILE: .\backend\api\__init__.py
-==============================
-
-==============================
-FILE: .\backend\database\db_config.py
-==============================
-import sqlite3
-from pathlib import Path
-
-DB_PATH = Path("data/app_database.db")
-
-def get_db_connection():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row # Để truy xuất theo tên cột
-    return conn
-
-def init_db():
-    conn = get_db_connection()
-    # Tạo bảng khóa học và bảng người dùng nếu chưa có
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS courses (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            teacher_id TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-==============================
-FILE: .\backend\llm\llm.py
-==============================
-import re
-
-class LocalMockLLM:
-    """
-    Mock LLM Engine: Xử lý câu trả lời dựa trên Retrieval Context.
-    Đảm bảo không phụ thuộc vào thư viện bên ngoài (g4f, openai, etc.)
-    """
-    def __init__(self, model_name: str = "offline-pedagogy-v1"):
-        self.model_name = model_name
-
-    def invoke(self, prompt: str) -> str:
-        # 1. Trích xuất ngữ cảnh từ prompt (Dựa trên cấu trúc trong qa.py)
-        # Tìm nội dung nằm giữa 'Ngữ cảnh tài liệu:' và 'Câu hỏi người dùng:'
-        context_match = re.search(r"Ngữ cảnh tài liệu:(.*?)Câu hỏi người dùng:", prompt, re.DOTALL)
-        
-        if not context_match:
-            return "Tôi không tìm thấy thông tin phù hợp trong tài liệu của khóa học này."
-
-        context = context_match.group(1).strip()
-        
-        # 2. Logic Rule-based: Trả về đoạn văn bản phù hợp nhất từ context
-        # Ở đây ta ưu tiên trả về toàn bộ ngữ cảnh đã được tìm thấy bởi RAG
-        if len(context) > 5:
-            return f"Dựa trên tài liệu khóa học, tôi xin giải đáp như sau:\n\n{context}"
-        
-        return "Tài liệu được cung cấp không đủ thông tin để trả lời câu hỏi này."
-
-# Khởi tạo instance duy nhất cho toàn hệ thống
-llm_instance = LocalMockLLM()
-
-def get_llm():
-    return llm_instance
-==============================
-FILE: .\backend\llm\__init__.py
 ==============================
 
 ==============================
@@ -1484,124 +819,6 @@ def chunk_canonical_data(
 
     return chunks
 ==============================
-FILE: .\backend\rag\hybrid_retriever.py
-==============================
-from backend.vectorstore.faiss_store import get_faiss_store
-from backend.vectorstore.bm25_store import BM25Store
-import os
-
-def hybrid_search(query: str, course_id: str = "default_course", k: int = 5):
-    """
-    Tìm kiếm kết hợp Vector + BM25.
-    FIX: Thêm default course_id để pass test và tránh TypeError.
-    """
-    # B. GUARDRAILS: Xử lý query rỗng hoặc quá ngắn (test_empty_query, test_short_query)
-    if not query or len(query.strip()) < 2:
-        return []
-
-    # Đường dẫn index dựa trên course_id
-    index_path = os.path.join("data", "faiss_index", course_id)
-    vector_store = get_faiss_store(index_path)
-    bm25_store = BM25Store.load(course_id)
-
-    vector_results = []
-    if vector_store:
-        try:
-            vector_results = vector_store.similarity_search_with_score(query, k=k)
-        except Exception:
-            vector_results = []
-
-    bm25_results = []
-    if bm25_store:
-        try:
-            bm25_results = bm25_store.search(query, k=k)
-        except Exception:
-            bm25_results = []
-
-    combined = []
-    # Format kết quả chuẩn hóa
-    for doc, score in vector_results:
-        combined.append({
-            "content": doc.page_content,
-            "source_file": doc.metadata.get("source_file", "Unknown"),
-            "score": float(score),
-            "type": "vector"
-        })
-
-    for doc, score in bm25_results:
-        combined.append({
-            "content": doc.page_content,
-            "source_file": doc.metadata.get("source_file", "Unknown"),
-            "score": float(score),
-            "type": "bm25"
-        })
-
-    return combined[:k]
-==============================
-FILE: .\backend\rag\ingest.py
-==============================
-import os
-from pathlib import Path
-from langchain_community.vectorstores import FAISS
-
-from backend.vectorstore.faiss_store import get_faiss_store, embeddings_instance
-from backend.utils.text_extraction import extract_text
-from backend.utils.chunking import chunk_text
-from backend.vectorstore.bm25_store import BM25Store
-
-RAW_DOCS_DIR = "data/raw_docs"
-
-def ingest_document(file_path: str, course_id: str):
-    # 1. Generate Document ID & Filename
-    file_name = os.path.basename(file_path)
-    document_id = Path(file_path).stem
-    
-    print(f"📥 Starting Ingestion: {file_name} (ID: {document_id})")
-
-    # 2. Extract Text -> Canonical Format (Page-delimited)
-    canonical_content = extract_text(file_path, document_id)
-
-    # 3. Persist Canonical TXT
-    if not os.path.exists(RAW_DOCS_DIR):
-        os.makedirs(RAW_DOCS_DIR)
-        
-    txt_path = os.path.join(RAW_DOCS_DIR, f"{document_id}.txt")
-    with open(txt_path, "w", encoding="utf-8") as f:
-        f.write(canonical_content)
-
-    # 4. Chunking (Dựa trên header trong canonical content)
-    # chunk_text sẽ parse header để lấy metadata (page, ocr flag)
-    docs = chunk_text(canonical_content, source_file=file_name)
-
-    if not docs:
-        print("⚠️ Warning: No chunks generated.")
-        return
-
-    # 5. Ingest FAISS
-    index_path = os.path.join("data", "faiss_index", course_id)
-    
-    if os.path.exists(os.path.join(index_path, "index.faiss")):
-        vector_store = FAISS.load_local(
-            index_path, 
-            embeddings_instance, 
-            allow_dangerous_deserialization=True
-        )
-        vector_store.add_documents(docs)
-    else:
-        vector_store = FAISS.from_documents(docs, embeddings_instance)
-
-    if not os.path.exists(os.path.dirname(index_path)):
-        os.makedirs(os.path.dirname(index_path))
-    
-    vector_store.save_local(index_path)
-
-    # 6. Ingest BM25
-    bm25_store = BM25Store.load(course_id)
-    bm25_store.add_documents(docs)
-    bm25_store.save()
-
-    print(f"✅ Ingest Complete: {len(docs)} chunks indexed for {course_id}")
-==============================
 FILE: .\backend\rag\llama_config.py
 ==============================
 # FILE: backend/rag/llama_config.py
@@ -1674,6 +891,12 @@ def get_or_create_index(course_id: str, vector_dim: int = 384) -> VectorStoreInd
     )
     return index
 
+# FIX: Implement get_llama_retriever để module retrieval gọi
+def get_llama_retriever(course_id: str, top_k: int = 10):
+    """Helper để lấy retriever từ index đã persist"""
+    index = get_or_create_index(course_id)
+    return index.as_retriever(similarity_top_k=top_k)
+
 def ingest_canonical_chunks(
     chunks: List[dict], 
     course_id: str, 
@@ -1696,10 +919,8 @@ def ingest_canonical_chunks(
     index = get_or_create_index(course_id)
     
     # 3. Deduplication Logic (Strict Check)
-    # Check against keys in DocStore (since node.id_ is set to content_hash)
     existing_hashes: Set[str] = set()
     try:
-        # This gets all keys in the docstore. For MVP/medium data, this is acceptable.
         for node_id in index.docstore.docs.keys():
             existing_hashes.add(node_id)
     except Exception:
@@ -1714,7 +935,7 @@ def ingest_canonical_chunks(
             continue
         
         nodes_to_insert.append(node)
-        existing_hashes.add(node.node_id) # Add to local set for batch dedup
+        existing_hashes.add(node.node_id) 
 
     if skipped_count > 0:
         print(f"🔎 Dedup check: Skipped {skipped_count} duplicate chunks.")
@@ -1809,9 +1030,9 @@ def convert_chunks_to_nodes(
 FILE: .\backend\rag\retrieval.py
 ==============================
 from typing import List, Dict, Any
-from backend.vectorstore.faiss_store import get_faiss_store
 from backend.vectorstore.bm25_store import BM25Store
-from backend.rag.llama_config import get_llama_retriever # Giả định import từ project tree
+# FIX: Import retriever từ llama_ingest (nơi chứa logic load index)
+from backend.rag.llama_ingest import get_llama_retriever
 
 # Cấu hình cố định theo SPEC
 THRESHOLD = 0.2
@@ -1854,7 +1075,6 @@ def hybrid_search(query: str, course_id: str, k: int = TOP_K_FINAL) -> List[Dict
 
     # 4. Weighted Fusion & Strict Logic
     # Dùng dictionary để dedup theo CHUNK BOUNDARY
-    # key = doc_id | page | line_start | line_end
     fused_map = {}
 
     # Fusion rules: 0.6 Vector / 0.4 BM25
@@ -1920,70 +1140,6 @@ FILE: .\backend\rag\__init__.py
 ==============================
 
 ==============================
-FILE: .\backend\utils\citation.py
-==============================
-def format_apa(source: dict) -> str:
-    """
-    APA 7th basic format
-    """
-    author = "Unknown"
-    year = "n.d."
-    title = source.get("source_file", "Unknown document")
-    page = source.get("page")
-
-    page_part = f" (p. {page})" if page is not None else ""
-
-    return f"{author} ({year}). {title}{page_part}."
-
-
-def format_ieee(source: dict, index: int) -> str:
-    """
-    IEEE basic format
-    """
-    title = source.get("source_file", "Unknown document")
-    page = source.get("page")
-
-    page_part = f", p. {page}" if page is not None else ""
-
-    return f"[{index}] {title}{page_part}."
-
-==============================
-FILE: .\backend\utils\ocr.py
-==============================
-import logging
-import numpy as np
-from paddleocr import PaddleOCR
-
-logger = logging.getLogger(__name__)
-
-_ocr_engine = None
-
-def get_ocr_engine():
-    global _ocr_engine
-    if _ocr_engine is None:
-        # lang='vi' hỗ trợ tiếng Việt, use_angle_cls để xoay ảnh nghiêng
-        _ocr_engine = PaddleOCR(use_angle_cls=True, lang='vi', show_log=False)
-    return _ocr_engine
-
-def ocr_image(image_obj) -> str:
-    """
-    OCR ảnh PIL. Trả về text hoặc None nếu lỗi.
-    """
-    try:
-        ocr = get_ocr_engine()
-        # Chuyển PIL Image sang numpy array
-        img_np = np.array(image_obj)
-        result = ocr.ocr(img_np, cls=True)
-        
-        lines = []
-        if result and result[0]:
-            lines = [line[1][0] for line in result[0]]
-        
-        return "\n".join(lines)
-    except Exception as e:
-        logger.error(f"❌ OCR Internal Error: {e}")
-        return None
-==============================
 FILE: .\backend\utils\text_extraction.py
 ==============================
 import logging
@@ -1991,7 +1147,6 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any
 
-from pypdf import PdfReader
 from pdf2image import convert_from_path
 from docx import Document as DocxDocument
 
@@ -2001,28 +1156,9 @@ from backend.utils.ocr import ocr_image
 # Cấu hình Logger
 logger = logging.getLogger(__name__)
 
-# Ngưỡng ký tự trung bình mỗi trang để quyết định dùng OCR
-# Nếu pypdf lấy được ít hơn số này, coi là file scan
-TEXT_DENSITY_THRESHOLD = 50 
-
-
 def extract_text(file_path: str) -> List[Dict[str, Any]]:
     """
     Hàm entry point duy nhất để trích xuất văn bản.
-    
-    Args:
-        file_path (str): Đường dẫn tới file cần xử lý.
-        
-    Returns:
-        List[Dict]: Danh sách các trang văn bản với định dạng thống nhất:
-        [
-            {
-                "page": int,      # Số trang (bắt đầu từ 1)
-                "text": str,      # Nội dung văn bản thô
-                "source": str     # Công cụ trích xuất ('pypdf', 'paddle_ocr', 'docx', 'text')
-            },
-            ...
-        ]
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
@@ -2046,55 +1182,20 @@ def extract_text(file_path: str) -> List[Dict[str, Any]]:
 
 def _process_pdf(file_path: str) -> List[Dict[str, Any]]:
     """
-    Xử lý PDF: Tự động phát hiện PDF văn bản hay PDF scan.
+    FIX: Bắt buộc dùng OCR cho mọi file PDF (Force OCR).
+    Bỏ qua pypdf và density check.
     """
-    # 1. Thử trích xuất bằng pypdf (nhanh)
-    extracted_pages = _extract_pdf_text_pypdf(file_path)
-
-    # 2. Tính toán mật độ văn bản để phát hiện scan
-    total_chars = sum(len(p["text"].strip()) for p in extracted_pages)
-    num_pages = len(extracted_pages) if extracted_pages else 1
-    avg_chars = total_chars / num_pages
-
-    # 3. Nếu mật độ văn bản quá thấp, chuyển sang chế độ OCR
-    if avg_chars < TEXT_DENSITY_THRESHOLD:
-        logger.info(f"PDF density low ({avg_chars:.2f} chars/page). Switching to OCR mode.")
-        return _extract_pdf_ocr(file_path)
-    
-    logger.info("PDF text extraction successful using pypdf.")
-    return extracted_pages
-
-
-def _extract_pdf_text_pypdf(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Trích xuất text từ PDF dạng text-based bằng pypdf.
-    """
-    results = []
-    try:
-        reader = PdfReader(file_path)
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text() or ""
-            results.append({
-                "page": i + 1,
-                "text": text,
-                "source": "pypdf"
-            })
-    except Exception as e:
-        logger.error(f"pypdf extraction failed: {e}")
-        # Trả về list rỗng để logic chính quyết định fallback hoặc dừng
-        return []
-    
-    return results
+    logger.info(f"Processing PDF with Force OCR: {file_path}")
+    return _extract_pdf_ocr(file_path)
 
 
 def _extract_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
     """
-    Trích xuất text từ PDF dạng scan bằng cách chuyển sang ảnh và dùng PaddleOCR.
+    Trích xuất text từ PDF bằng cách chuyển sang ảnh và dùng PaddleOCR.
     """
     results = []
     try:
         # Chuyển PDF thành danh sách ảnh (PIL Images)
-        # Lưu ý: poppler phải được cài đặt trong môi trường (docker/system)
         images = convert_from_path(file_path)
         
         for i, image in enumerate(images):
@@ -2109,7 +1210,6 @@ def _extract_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
             
     except Exception as e:
         logger.error(f"OCR extraction failed: {e}")
-        # Nếu lỗi convert ảnh hoặc OCR, trả về list rỗng hoặc lỗi cục bộ
         return []
 
     return results
@@ -2118,8 +1218,6 @@ def _extract_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
 def _process_docx(file_path: str) -> List[Dict[str, Any]]:
     """
     Xử lý file DOCX.
-    DOCX không có khái niệm 'trang' cứng như PDF, ta gộp toàn bộ vào page 1 
-    hoặc có thể tách theo section nếu cần thiết sau này.
     """
     try:
         doc = DocxDocument(file_path)

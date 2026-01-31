@@ -5,7 +5,8 @@ from pathlib import Path
 
 from backend.utils.text_extraction import extract_text
 from backend.rag.canonicalize import canonicalize_pages
-from backend.rag.chunking import chunk_canonical_pages
+# FIX: Import đúng tên hàm từ chunking.py
+from backend.rag.chunking import chunk_canonical_data
 from backend.rag.llama_ingest import ingest_canonical_chunks
 
 router = APIRouter()
@@ -23,7 +24,7 @@ async def upload_file(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # 2. Extract raw pages
+    # 2. Extract raw pages (Force OCR logic nằm trong utils)
     # EXPECT: List[Dict] [{page_num, text, ...}]
     raw_pages = extract_text(file_path)
 
@@ -32,7 +33,8 @@ async def upload_file(
 
     # 4. Chunking
     doc_id = Path(file.filename).stem
-    chunks = chunk_canonical_pages(canonical_pages)
+    # FIX: Truyền thêm doc_id vào hàm chunking
+    chunks = chunk_canonical_data(canonical_pages, doc_id)
 
     # 5. Ingest into LlamaIndex
     ingest_canonical_chunks(

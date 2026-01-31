@@ -1,20 +1,16 @@
 ├── D:\ai-tro-giang/
 │   ├── bundle.py
-│   ├── check_imports.py
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   ├── main.py
 │   ├── package-lock.json
 │   ├── package.json
 │   ├── project_code.txt
-│   ├── quick_test.py
 │   ├── README.md
 │   ├── requirements.txt
-│   ├── test.txt
 │   ├── backend/
 │   │   ├── __init__.py
 │   │   ├── agent/
-│   │   │   ├── prompt.py
 │   │   │   ├── qa.py
 │   │   │   ├── __init__.py
 │   │   ├── api/
@@ -23,24 +19,15 @@
 │   │   │   ├── __init__.py
 │   │   ├── data/
 │   │   │   ├── raw_docs/
-│   │   ├── database/
-│   │   │   ├── db_config.py
-│   │   ├── llm/
-│   │   │   ├── llm.py
-│   │   │   ├── __init__.py
 │   │   ├── rag/
 │   │   │   ├── canonicalize.py
 │   │   │   ├── chunking.py
-│   │   │   ├── hybrid_retriever.py
-│   │   │   ├── ingest.py
 │   │   │   ├── llama_config.py
 │   │   │   ├── llama_ingest.py
 │   │   │   ├── node_parser.py
 │   │   │   ├── retrieval.py
 │   │   │   ├── __init__.py
 │   │   ├── utils/
-│   │   │   ├── citation.py
-│   │   │   ├── ocr.py
 │   │   │   ├── text_extraction.py
 │   │   ├── vectorstore/
 │   │   │   ├── bm25_store.py

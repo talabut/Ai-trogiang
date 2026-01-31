@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
-from backend.vectorstore.faiss_store import get_faiss_store
 from backend.vectorstore.bm25_store import BM25Store
-from backend.rag.llama_config import get_llama_retriever # Giả định import từ project tree
+# FIX: Import retriever từ llama_ingest (nơi chứa logic load index)
+from backend.rag.llama_ingest import get_llama_retriever
 
 # Cấu hình cố định theo SPEC
 THRESHOLD = 0.2
@@ -44,7 +44,6 @@ def hybrid_search(query: str, course_id: str, k: int = TOP_K_FINAL) -> List[Dict
 
     # 4. Weighted Fusion & Strict Logic
     # Dùng dictionary để dedup theo CHUNK BOUNDARY
-    # key = doc_id | page | line_start | line_end
     fused_map = {}
 
     # Fusion rules: 0.6 Vector / 0.4 BM25
