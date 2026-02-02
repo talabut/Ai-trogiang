@@ -25,3 +25,12 @@ llama-index-core
 llama-index-embeddings-huggingface
 llama-index-vector-stores-faiss
 llama-index-readers-file
+
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+filelock
+psutil
+faiss-cpu
+pytest

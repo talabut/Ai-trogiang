@@ -1,8 +1,19 @@
 import axios from "axios";
 
-// Khởi tạo axios instance cơ bản nhất
-export const api = axios.create({
-  baseURL: "http://127.0.0.1:8000",
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1",
+  timeout: 30000,
 });
+
+api.interceptors.response.use(
+  r => r,
+  async error => {
+    const config = error.config;
+    if (!config || config.__retry) return Promise.reject(error);
+
+    config.__retry = true;
+    return api(config);
+  }
+);
+
 export default api;
-// KHÔNG thêm bất kỳ interceptors nào liên quan đến Authorization ở đây

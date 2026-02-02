@@ -1,53 +1,43 @@
-from fastapi import APIRouter, File, UploadFile, Query
-import shutil
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from backend.config.integrity_config import settings
+from backend.security.guard import safe_join
+from backend.api.dependencies import success
+from backend.locks.ingest_lock import acquire_ingest_lock, IngestLocked
 import os
-from pathlib import Path
-
-from backend.utils.text_extraction import extract_text
-from backend.rag.canonicalize import canonicalize_pages
-# FIX: Import đúng tên hàm từ chunking.py
-from backend.rag.chunking import chunk_canonical_data
-from backend.rag.llama_ingest import ingest_canonical_chunks
 
 router = APIRouter()
 
-UPLOAD_DIR = "backend/data/raw_docs"
+UPLOAD_DIR = "./data/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-@router.post("/")
-async def upload_file(
-    file: UploadFile = File(...),
-    course_id: str = Query("ML101")
-):
-    # 1. Save file
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+@router.post("/upload")
+async def upload(file: UploadFile = File(...)):
+    content = await file.read()
 
-    # 2. Extract raw pages (Force OCR logic nằm trong utils)
-    # EXPECT: List[Dict] [{page_num, text, ...}]
-    raw_pages = extract_text(file_path)
+    if len(content) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(413, "File too large")
 
-    # 3. Canonicalize pages
-    canonical_pages = canonicalize_pages(raw_pages)
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in settings.ALLOWED_EXTENSIONS:
+        raise HTTPException(400, "Unsupported file type")
 
-    # 4. Chunking
-    doc_id = Path(file.filename).stem
-    # FIX: Truyền thêm doc_id vào hàm chunking
-    chunks = chunk_canonical_data(canonical_pages, doc_id)
+    path = safe_join(UPLOAD_DIR, file.filename)
+    with open(path, "wb") as f:
+        f.write(content)
 
-    # 5. Ingest into LlamaIndex
-    ingest_canonical_chunks(
-        chunks=chunks,
-        course_id=course_id,
-        file_name=file.filename,
-        doc_id=doc_id
-    )
+    return success({"filename": os.path.basename(path)})
+async def upload_course(...):
+    try:
+        lock = acquire_ingest_lock(course_id)
+    except IngestLocked:
+        return {
+            "success": False,
+            "error": "INGEST_LOCKED",
+            "message": "Ingest already in progress"
+        }
 
-    return {
-        "filename": file.filename,
-        "course_id": course_id,
-        "doc_id": doc_id,
-        "chunks": len(chunks),
-        "status": "uploaded_and_ingested"
-    }
+    try:
+        ingest_course_files(...)
+        return {"success": True}
+    finally:
+        lock.release()

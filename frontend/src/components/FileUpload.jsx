@@ -1,35 +1,27 @@
-import React, { useState } from 'react';
-import api from '../api/client';
+import { useState } from "react";
+import { uploadFile } from "../api/upload";
 
-const FileUpload = () => {
-  const [file, setFile] = useState(null);
-  const [loading, setLoading] = useState(false);
+export default function FileUpload() {
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState(null);
 
-  const handleUpload = async () => {
-    if (!file) return alert("Chọn file!");
-    const formData = new FormData();
-    formData.append('file', file);
+  async function handleUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    setLoading(true);
     try {
-      await api.post('/upload/', formData, {
-        params: { course_id: 'ML101' },
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      alert("Upload thành công!");
-    } catch (error) {
-      alert("Lỗi upload: " + (error.response?.data?.detail || error.message));
-    } finally {
-      setLoading(false);
+      setError(null);
+      await uploadFile(file, setProgress);
+    } catch (err) {
+      setError("Upload failed");
     }
-  };
+  }
 
   return (
     <div>
-      <input type="file" onChange={(e) => setFile(e.target.files[0])} />
-      <button onClick={handleUpload} disabled={loading}>Upload & Ingest</button>
+      <input type="file" onChange={handleUpload} />
+      {progress > 0 && <div>Uploading: {progress}%</div>}
+      {error && <div style={{color:"red"}}>{error}</div>}
     </div>
   );
-};
-
-export default FileUpload;
+}

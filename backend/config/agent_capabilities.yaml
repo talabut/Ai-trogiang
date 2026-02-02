@@ -1,0 +1,20 @@
+version: "1.1"
+
+allowed_capabilities:
+  - tool_name: "rag.retrieve"
+  - tool_name: "rag.search"
+  - tool_name: "upload.ingest"
+
+capabilities:
+  filesystem:
+    read:
+      - backend/data
+      - data
+      - uploads
+    write:
+      - data
+      - uploads
+  network:
+    outbound: true
+  execution:
+    python: true

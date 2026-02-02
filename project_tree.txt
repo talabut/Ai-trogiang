@@ -9,16 +9,35 @@
 │   ├── README.md
 │   ├── requirements.txt
 │   ├── backend/
+│   │   ├── bootstrap.py
+│   │   ├── startup_validator.py
 │   │   ├── __init__.py
 │   │   ├── agent/
 │   │   │   ├── qa.py
+│   │   │   ├── tools.py
 │   │   │   ├── __init__.py
 │   │   ├── api/
 │   │   │   ├── chat.py
+│   │   │   ├── dependencies.py
+│   │   │   ├── schemas.py
 │   │   │   ├── upload.py
 │   │   │   ├── __init__.py
+│   │   ├── config/
+│   │   │   ├── agent_capabilities.yaml
+│   │   │   ├── integrity_config.py
+│   │   ├── core/
+│   │   │   ├── interfaces.py
 │   │   ├── data/
 │   │   │   ├── raw_docs/
+│   │   ├── db/
+│   │   │   ├── sqlite_safe.py
+│   │   ├── infra/
+│   │   │   ├── rag/
+│   │   │   │   ├── retrieval_impl.py
+│   │   ├── locks/
+│   │   │   ├── ingest_lock.py
+│   │   ├── middleware/
+│   │   │   ├── rate_limit.py
 │   │   ├── rag/
 │   │   │   ├── canonicalize.py
 │   │   │   ├── chunking.py
@@ -27,11 +46,19 @@
 │   │   │   ├── node_parser.py
 │   │   │   ├── retrieval.py
 │   │   │   ├── __init__.py
+│   │   ├── security/
+│   │   │   ├── guard.py
+│   │   ├── services/
+│   │   │   ├── agent.py
 │   │   ├── utils/
+│   │   │   ├── memory_guard.py
+│   │   │   ├── ocr.py
 │   │   │   ├── text_extraction.py
 │   │   ├── vectorstore/
+│   │   │   ├── atomic_persist.py
 │   │   │   ├── bm25_store.py
 │   │   │   ├── faiss_store.py
+│   │   │   ├── index_meta.py
 │   ├── data/
 │   │   ├── app_database.db
 │   │   ├── bm25_Ml101.pkl
@@ -61,11 +88,19 @@
 │   │   │   ├── main.jsx
 │   │   │   ├── api/
 │   │   │   │   ├── client.js
+│   │   │   │   ├── upload.js
 │   │   │   ├── components/
 │   │   │   │   ├── ChatBox.jsx
+│   │   │   │   ├── ChatWindow.jsx
 │   │   │   │   ├── FileUpload.jsx
+│   │   │   │   ├── UploadForm.jsx
 │   ├── tests/
+│   │   ├── test_concurrent_ingest.py
+│   │   ├── test_contract_api.py
+│   │   ├── test_import_boot.py
+│   │   ├── test_integrity_fail.py
 │   │   ├── test_llama_ingest_strict.py
+│   │   ├── test_sandbox_enforcement.py
 │   │   ├── test_strict_chunking.py
 │   ├── uploads/
 │   │   ├── test_knowledge.txt

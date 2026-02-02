@@ -1,32 +1,47 @@
-# FILE: backend/main.py
-import uvicorn
-from fastapi import FastAPI
+import time
+import logging
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-# Chỉ import các api nghiệp vụ cơ bản
+from backend.config.integrity_config import settings
+from backend.api.dependencies import request_id_middleware
 from backend.api import upload, chat
+from backend.startup_validator import validate_startup
+from backend.middleware.rate_limit import rate_limit
 
-app = FastAPI(title="AI Teaching Assistant - NO AUTH MVP")
+logging.basicConfig(level=logging.INFO)
 
-# Cấu hình CORS cho Frontend (Port 5173)
+app = FastAPI(title=settings.PROJECT_NAME)
+
+@app.on_event("startup")
+def on_startup():
+    validate_startup()
+
+app.middleware("http")(request_id_middleware)
+app.middleware("http")(rate_limit)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=settings.ALLOWED_CORS_ORIGINS,
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
-# --- ĐĂNG KÝ ROUTER ---
-# 1. Upload file (POST /upload/)
-app.include_router(upload.router, prefix="/upload", tags=["Upload"])
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": "INTERNAL_ERROR",
+            "message": "Internal server error"
+        }
+    )
 
-# 2. Chat (POST /chat/query)
-app.include_router(chat.router, prefix="/chat", tags=["AI Chat"])
+@app.get("/health")
+def health():
+    return {"status": "ok", "ts": time.time()}
 
-@app.get("/")
-def root():
-    return {"message": "System is running (NO AUTH MODE)"}
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+app.include_router(upload.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")
