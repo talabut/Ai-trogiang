@@ -1,37 +1,55 @@
-import hashlib
-from datetime import datetime
-from llama_index.core.schema import TextNode
 
-INGEST_VERSION = "v1.0"
-EMBEDDING_MODEL_TAG = "sentence-transformers/all-MiniLM-L6-v2"
+from typing import List, Dict, Any
+from backend.rag.chunking import strict_chunk_text
 
+
+# === Ingest / Vectorstore contract constants ===
+INGEST_VERSION = "v1"
+EMBEDDING_MODEL_TAG = "default"
+
+# Chunking contract (MUST match chunking.py)
 CHUNK_SIZE = 512
-CHUNK_OVERLAP = 64
+CHUNK_OVERLAP = 50
 
-def compute_content_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def parse_nodes(
+    text: str,
+    file_name: str,
+    metadata_pages: List[Dict[str, Any]],
+):
+    """
+    Mỗi node BẮT BUỘC có:
+    - page
+    - line_start
+    - line_end
+    - file_name
+    """
 
-def convert_chunks_to_nodes(chunks, document_id, file_name):
+    assert isinstance(text, str)
+    assert file_name
+
     nodes = []
-    for chunk in chunks:
-        text = chunk["text"].strip()
-        if not text:
-            continue
+    chunks = strict_chunk_text(text)
 
-        h = compute_content_hash(text)
-        node = TextNode(
-            id_=h,
-            text=text,
-            metadata={
-                "doc_id": document_id,
+    for chunk in chunks:
+        page_meta = _match_page_metadata(chunk, metadata_pages)
+
+        assert page_meta is not None, "Missing OCR metadata"
+
+        nodes.append({
+            "text": chunk,
+            "metadata": {
+                "page": page_meta["page"],
+                "line_start": page_meta["line_start"],
+                "line_end": page_meta["line_end"],
                 "file_name": file_name,
-                "content_hash": h,
-                "index_version": INGEST_VERSION,
-                "embedding_model": EMBEDDING_MODEL_TAG,
-                "chunk_size": CHUNK_SIZE,
-                "chunk_overlap": CHUNK_OVERLAP,
-                "ingest_time": datetime.utcnow().isoformat(),
             },
-        )
-        nodes.append(node)
+        })
+
     return nodes
+
+
+def _match_page_metadata(chunk: str, pages: List[Dict[str, Any]]):
+    for page in pages:
+        if page["text"] in chunk:
+            return page
+    return None

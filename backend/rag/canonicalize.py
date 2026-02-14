@@ -9,6 +9,23 @@ class FatalError(Exception):
     pass
 
 
+def canonicalize_text(text: str) -> str:
+    """
+    Canonicalize raw extracted text into a normalized format
+    for downstream chunking and indexing.
+    """
+    if not text:
+        return ""
+
+    lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            lines.append(line)
+
+    return "\n".join(lines)
+
+
 def get_canonical_hash(chunk: Dict) -> str:
     text = unicodedata.normalize("NFKC", chunk["text"].strip())
     text = " ".join(text.split())

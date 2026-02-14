@@ -21,3 +21,16 @@ def atomic_persist(index_dir: str, persist_fn):
     except Exception:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
+
+
+def persist_nodes(nodes, index_path):
+    """
+    Public API required by ingest pipeline and tests.
+
+    Persist nodes atomically into the given index path.
+    """
+    def _persist(tmp_dir: str):
+        # nodes object is responsible for knowing how to persist itself
+        nodes.persist(tmp_dir)
+
+    atomic_persist(index_path, _persist)

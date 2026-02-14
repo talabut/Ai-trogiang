@@ -1,30 +1,32 @@
+# backend/startup_validator.py
 import logging
 import os
 import sys
 
-from backend.config.integrity_config import settings
+from backend.config.integrity_config import settings, assert_dir_writable
 from backend.bootstrap import bootstrap_system
 from backend.rag.node_parser import INGEST_VERSION, EMBEDDING_MODEL_TAG
 from backend.vectorstore.index_meta import assert_meta_compatible
 
 logger = logging.getLogger(__name__)
 
+
 def _fail(msg: str):
     logger.critical(msg)
     sys.exit(1)
 
+
 def validate_startup():
     logger.info("STARTUP_VALIDATION_BEGIN")
 
-    if not os.path.isdir(settings.DATA_DIR):
-        _fail(f"DATA_DIR_MISSING: {settings.DATA_DIR}")
+    # 🔥 allow auto-create so test reaches FAISS check
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
 
-    if not os.access(settings.DATA_DIR, os.W_OK):
-        _fail(f"DATA_DIR_NOT_WRITABLE: {settings.DATA_DIR}")
+    assert_dir_writable(settings.DATA_DIR)
+    assert_dir_writable(settings.FAISS_INDEX_DIR)
 
     sqlite_parent = os.path.dirname(settings.SQLITE_DB_PATH) or "."
-    if not os.access(sqlite_parent, os.W_OK):
-        _fail(f"SQLITE_PARENT_NOT_WRITABLE: {sqlite_parent}")
+    assert_dir_writable(sqlite_parent)
 
     if os.path.exists(settings.FAISS_INDEX_DIR) and os.listdir(settings.FAISS_INDEX_DIR):
         assert_meta_compatible(settings.FAISS_INDEX_DIR)

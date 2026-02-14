@@ -1,5 +1,6 @@
 # backend/locks/ingest_lock.py
 import os
+from contextlib import contextmanager
 from filelock import FileLock, Timeout
 
 LOCK_ROOT = ".ingest_locks"
@@ -20,3 +21,15 @@ def acquire_ingest_lock(course_id: str, timeout: int = 1):
         return lock
     except Timeout:
         raise IngestLocked(f"INGEST_IN_PROGRESS: {course_id}")
+
+
+@contextmanager
+def ingest_lock(course_id: str = "global", timeout: int = 1):
+    """
+    Public ingest lock required by tests and chunking API.
+    """
+    lock = acquire_ingest_lock(course_id, timeout)
+    try:
+        yield
+    finally:
+        lock.release()

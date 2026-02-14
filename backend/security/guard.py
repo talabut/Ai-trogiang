@@ -1,11 +1,37 @@
+# backend/security/guard.py
+import builtins
 import os
-from fastapi import HTTPException
+import subprocess
 
-def safe_join(base: str, filename: str) -> str:
-    fname = os.path.basename(filename)
-    path = os.path.abspath(os.path.join(base, fname))
 
-    if not path.startswith(os.path.abspath(base)):
-        raise HTTPException(status_code=400, detail="Invalid path")
+class RuntimeSandboxError(RuntimeError):
+    pass
 
-    return path
+
+_original_open = builtins.open
+
+
+def enable_runtime_sandbox():
+    def _blocked(*args, **kwargs):
+        raise RuntimeSandboxError("Runtime sandbox violation")
+
+    # --- Dangerous execution ---
+    builtins.eval = _blocked
+    builtins.exec = _blocked
+
+    # --- OS / Process execution ---
+    os.system = _blocked
+    subprocess.run = _blocked
+    subprocess.Popen = _blocked
+
+    # --- Filesystem isolation ---
+    data_root = os.path.abspath("backend/data")
+
+    def sandboxed_open(file, mode="r", *args, **kwargs):
+        if any(flag in mode for flag in ("w", "a", "x", "+")):
+            abs_path = os.path.abspath(file)
+            if not abs_path.startswith(data_root):
+                raise RuntimeSandboxError("Runtime sandbox violation")
+        return _original_open(file, mode, *args, **kwargs)
+
+    builtins.open = sandboxed_open

@@ -1,15 +1,23 @@
-import os
+# backend/bootstrap.py
+import sys
 import logging
-from backend.config.integrity_config import settings
+
+from backend.config.integrity_config import settings, assert_dir_writable
 from backend.db.sqlite_safe import connect_sqlite
+from backend.security.guard import enable_runtime_sandbox
 
 logger = logging.getLogger(__name__)
+
 
 def bootstrap_system():
     logger.info("BOOTSTRAP_START")
 
-    os.makedirs(settings.DATA_DIR, exist_ok=True)
-    os.makedirs(settings.FAISS_INDEX_DIR, exist_ok=True)
+    # 🔥 Enable sandbox ONCE
+    enable_runtime_sandbox()
+
+    # 🔒 Integrity checks (FAIL FAST)
+    assert_dir_writable(settings.DATA_DIR)
+    assert_dir_writable(settings.FAISS_INDEX_DIR)
 
     try:
         conn = connect_sqlite(settings.SQLITE_DB_PATH)
@@ -20,10 +28,7 @@ def bootstrap_system():
         """)
         conn.close()
     except Exception as e:
-        logger.critical(f"BOOTSTRAP_FAILED: {e}")
-        raise SystemExit(1)
-
-    if not os.access(settings.FAISS_INDEX_DIR, os.W_OK):
-        raise SystemExit("FAISS_INDEX_NOT_WRITABLE")
+        logger.critical(f"BOOTSTRAP_FAILED: DB_ERROR {e}")
+        sys.exit(1)
 
     logger.info("BOOTSTRAP_OK")

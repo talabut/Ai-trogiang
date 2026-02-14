@@ -8,6 +8,7 @@
 │   ├── project_code.txt
 │   ├── README.md
 │   ├── requirements.txt
+│   ├── .ingest_locks/
 │   ├── backend/
 │   │   ├── bootstrap.py
 │   │   ├── startup_validator.py
@@ -19,12 +20,14 @@
 │   │   ├── api/
 │   │   │   ├── chat.py
 │   │   │   ├── dependencies.py
+│   │   │   ├── health.py
 │   │   │   ├── schemas.py
 │   │   │   ├── upload.py
 │   │   │   ├── __init__.py
 │   │   ├── config/
 │   │   │   ├── agent_capabilities.yaml
 │   │   │   ├── integrity_config.py
+│   │   │   ├── __init__.py
 │   │   ├── core/
 │   │   │   ├── interfaces.py
 │   │   ├── data/
@@ -48,6 +51,7 @@
 │   │   │   ├── __init__.py
 │   │   ├── security/
 │   │   │   ├── guard.py
+│   │   │   ├── __init__.py
 │   │   ├── services/
 │   │   │   ├── agent.py
 │   │   ├── utils/
@@ -64,10 +68,6 @@
 │   │   ├── bm25_Ml101.pkl
 │   │   ├── bm25/
 │   │   ├── faiss_index/
-│   │   │   ├── .gitkeep
-│   │   │   ├── Ml101/
-│   │   │   │   ├── index.faiss
-│   │   │   │   ├── index.pkl
 │   │   ├── llama_index/
 │   │   │   ├── TEST_COURSE_V1/
 │   │   │   │   ├── default__vector_store.json
@@ -78,6 +78,8 @@
 │   │   ├── raw_docs/
 │   │   │   ├── .gitkeep
 │   │   ├── uploads/
+│   │   │   ├── test_scan.pdf
+│   ├── dummy_path/
 │   ├── frontend/
 │   │   ├── index.html
 │   │   ├── package-lock.json
@@ -95,12 +97,18 @@
 │   │   │   │   ├── FileUpload.jsx
 │   │   │   │   ├── UploadForm.jsx
 │   ├── tests/
+│   │   ├── conftest.py
+│   │   ├── test_chat_api.py
 │   │   ├── test_concurrent_ingest.py
 │   │   ├── test_contract_api.py
 │   │   ├── test_import_boot.py
 │   │   ├── test_integrity_fail.py
 │   │   ├── test_llama_ingest_strict.py
+│   │   ├── test_rate_limit.py
 │   │   ├── test_sandbox_enforcement.py
 │   │   ├── test_strict_chunking.py
+│   │   ├── test_upload_api.py
+│   │   ├── fixtures/
+│   │   │   ├── sample.pdf
 │   ├── uploads/
 │   │   ├── test_knowledge.txt

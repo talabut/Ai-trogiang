@@ -1,6 +1,19 @@
+# FILE: backend/config/integrity_config.py
 import os
-from pydantic_settings import BaseSettings
 from typing import List, Set
+from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
+
+def assert_dir_writable(path: str):
+    try:
+        os.makedirs(path, exist_ok=True)
+        test_file = os.path.join(path, ".write_test")
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+    except Exception:
+        import sys
+        sys.exit(1)
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "ai-tro-giang"
@@ -24,7 +37,8 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_INGEST: int = 1
     MAX_MEMORY_MB: int = 2048
 
-    class Config:
-        env_file = ".env"
+    model_config = ConfigDict(
+        env_file=".env"
+    )
 
 settings = Settings()

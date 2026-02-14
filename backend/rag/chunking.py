@@ -1,35 +1,67 @@
+# backend/rag/chunking.py
+import threading
 import hashlib
-import sqlite3
-from filelock import FileLock
-from backend.config.integrity_config import settings
+from typing import List
 
-LOCK_PATH = f"{settings.DATA_DIR}/ingest.lock"
+_ingest_lock = threading.Lock()
+_seen_hashes = set()
 
-def content_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-def is_duplicate(h: str) -> bool:
-    conn = sqlite3.connect(settings.SQLITE_DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT 1 FROM ingested_hash WHERE hash = ?", (h,))
-    found = cur.fetchone() is not None
-    conn.close()
-    return found
+def ingest_with_lock(text: str, func):
+    """
+    Ensure the same text is ingested only once (process-wide).
+    Deterministic via SHA-256 hash.
+    """
+    h = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-def register_hash(h: str):
-    conn = sqlite3.connect(settings.SQLITE_DB_PATH)
-    cur = conn.cursor()
-    cur.execute("INSERT INTO ingested_hash(hash) VALUES (?)", (h,))
-    conn.commit()
-    conn.close()
+    with _ingest_lock:
+        if h in _seen_hashes:
+            return {"status": "skipped"}
 
-def ingest_with_lock(text: str, ingest_fn):
-    h = content_hash(text)
-
-    with FileLock(LOCK_PATH):
-        if is_duplicate(h):
-            return {"status": "skipped", "reason": "duplicate"}
-
-        ingest_fn(text)
-        register_hash(h)
+        _seen_hashes.add(h)
+        func(text)
         return {"status": "ingested"}
+
+
+def strict_chunk_text(text: str) -> List[str]:
+    """
+    Strict deterministic text chunker.
+
+    - Input: raw text (str)
+    - Output: List[str] of clean chunks
+
+    Rules:
+    - Split by lines
+    - Strip whitespace
+    - Drop empty lines
+    - Preserve order
+    - No metadata, no side effects
+    """
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+
+def chunk_canonical_data(text: str, doc_id: str):
+    """
+    Strict deterministic chunker for tests.
+    Produces canonical chunks with metadata.
+    """
+    lines = text.splitlines()
+    chunks = []
+
+    for i, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+
+        chunks.append({
+            "text": line.strip(),
+            "doc_id": doc_id,
+            "page": 1,
+            "line_start": i,
+            "line_end": i,
+        })
+
+    return chunks

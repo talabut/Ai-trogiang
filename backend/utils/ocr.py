@@ -1,41 +1,39 @@
-# backend/utils/ocr.py
-import logging
-import numpy as np
+# FILE: backend/utils/ocr.py
 from paddleocr import PaddleOCR
-from PIL import Image
 
-logger = logging.getLogger(__name__)
-
-# Khởi tạo OCR 1 lần (singleton)
 _ocr = PaddleOCR(
-    use_angle_cls=True,
-    lang="vi",          # hoặc "en" nếu chỉ tiếng Anh
+    use_textline_orientation=True,
+    lang="en"
 )
 
-def ocr_image(image: Image.Image) -> str:
+def run_ocr(image_path: str):
     """
-    Nhận PIL Image -> trả về text thuần.
-    Raise exception nếu OCR fail.
+    Mandatory OCR for scanned PDFs.
+    Output schema:
+    {
+      text: str,
+      page: int,
+      line_start: int,
+      line_end: int
+    }
     """
-    if image is None:
-        raise ValueError("OCR_INPUT_IMAGE_NONE")
+    results = _ocr.ocr(image_path, cls=True)
 
-    try:
-        img_array = np.array(image)
-        result = _ocr.ocr(img_array, cls=True)
+    output = []
+    line_counter = 0
 
-        if not result:
-            return ""
+    for page_idx, page in enumerate(results):
+        for line in page:
+            text = line[1][0]
+            if not text.strip():
+                continue
 
-        lines = []
-        for block in result:
-            for line in block:
-                text = line[1][0]
-                if text and text.strip():
-                    lines.append(text.strip())
+            output.append({
+                "text": text,
+                "page": page_idx + 1,
+                "line_start": line_counter,
+                "line_end": line_counter,
+            })
+            line_counter += 1
 
-        return "\n".join(lines)
-
-    except Exception as e:
-        logger.exception("PADDLE_OCR_FAILED")
-        raise RuntimeError(f"OCR_FAILED: {e}")
+    return output

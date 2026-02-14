@@ -1,43 +1,34 @@
-import logging
 from typing import Dict, Any
 
-from backend.core.interfaces import IRetrievalService, IAgent
 
-logger = logging.getLogger(__name__)
+class QAAgent:
+    """
+    QAAgent KHÔNG tạo tri thức.
+    Nó chỉ:
+    - Nhận tool_result
+    - Kiểm tra trạng thái
+    - Pass-through hoặc từ chối
+    """
 
-MIN_EVIDENCE_COUNT = 1
+    def answer(self, tool_result: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_result is None:
+            raise RuntimeError("QAAgent: tool_result is REQUIRED. Agent cannot answer without tool.")
 
+        status = tool_result.get("status")
+        if status != "FOUND":
+            return {
+                "answer": None,
+                "confidence": 0.0,
+                "reason": "NOT_FOUND_IN_DATABASE",
+                "evidences": [],
+                "sources": []
+            }
 
-class QAAgent(IAgent):
-    def __init__(self, retrieval_service: IRetrievalService):
-        self.retrieval_service = retrieval_service
-
-    def answer(self, query: str, course_id: str) -> Dict[str, Any]:
-        try:
-            result = self.retrieval_service.retrieve(query, course_id)
-        except Exception as e:
-            logger.error(f"RETRIEVAL_ERROR | {str(e)}")
-            return self._refuse("RETRIEVAL_ERROR")
-
-        evidence = result if isinstance(result, list) else result.get("evidence", [])
-
-        if not evidence:
-            return self._refuse("NO_EVIDENCE")
-
-        if len(evidence) < MIN_EVIDENCE_COUNT:
-            return self._refuse("HALLUCINATION_CHECK_FAILED")
-
+        # TUYỆT ĐỐI không synthesize
         return {
-            "answer": None,
-            "refusal": False,
-            "evidence": evidence,
-        }
-
-    def _refuse(self, reason: str) -> Dict[str, Any]:
-        logger.info(f"AGENT_REFUSAL | reason={reason}")
-        return {
-            "answer": None,
-            "refusal": True,
-            "reason": reason,
-            "evidence": [],
+            "answer": tool_result.get("answer"),
+            "confidence": 1.0,
+            "reason": "FROM_DATABASE",
+            "evidences": tool_result.get("evidences", []),
+            "sources": tool_result.get("sources", [])
         }

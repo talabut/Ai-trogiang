@@ -9,6 +9,8 @@ from backend.api.dependencies import request_id_middleware
 from backend.api import upload, chat
 from backend.startup_validator import validate_startup
 from backend.middleware.rate_limit import rate_limit
+from backend.security.guard import enable_runtime_sandbox
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,6 +19,7 @@ app = FastAPI(title=settings.PROJECT_NAME)
 @app.on_event("startup")
 def on_startup():
     validate_startup()
+    enable_runtime_sandbox() 
 
 app.middleware("http")(request_id_middleware)
 app.middleware("http")(rate_limit)
