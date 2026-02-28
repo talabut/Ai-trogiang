@@ -3,30 +3,43 @@
 from typing import List, Dict
 from paddleocr import PaddleOCR
 import logging
+from threading import Lock
 
 logger = logging.getLogger(__name__)
 
-_ocr = PaddleOCR(
-    use_textline_orientation=True,
-    lang="en"
-)
+_ocr_instance = None
+_ocr_lock = Lock()
+
+
+def get_ocr() -> PaddleOCR:
+    """
+    Lazy singleton initializer for PaddleOCR.
+    Only loads model when first used.
+    Thread-safe.
+    """
+    global _ocr_instance
+
+    if _ocr_instance is None:
+        with _ocr_lock:
+            if _ocr_instance is None:
+                logger.info("[OCR INIT] Loading PaddleOCR model...")
+                _ocr_instance = PaddleOCR(
+                    use_textline_orientation=True,
+                    lang="en"
+                )
+                logger.info("[OCR INIT DONE]")
+
+    return _ocr_instance
 
 
 def run_ocr(pdf_path: str) -> List[Dict]:
     """
     OCR scanned PDF → return page-level text blocks
-
-    Output schema:
-    [
-        {
-            "page_number": int,
-            "text": str
-        }
-    ]
     """
 
     try:
-        results = _ocr.ocr(pdf_path)
+        ocr = get_ocr()
+        results = ocr.ocr(pdf_path)
     except Exception as e:
         logger.error(f"[OCR ERROR] {pdf_path}: {e}")
         return []
@@ -45,8 +58,6 @@ def run_ocr(pdf_path: str) -> List[Dict]:
 
         for line in page:
 
-            # Expected structure:
-            # line = [ [box], (text, confidence) ]
             if (
                 not line
                 or not isinstance(line, list)

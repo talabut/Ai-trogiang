@@ -1,3 +1,4 @@
+#backend/api/upload.py
 import os
 import uuid
 
@@ -91,7 +92,6 @@ async def upload_file(
         raise
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"UPLOAD_FAILED: {str(e)}"
-        )
+        import traceback
+        traceback.print_exc()
+        raise

@@ -1,5 +1,6 @@
 ├── D:\ai-tro-giang/
 │   ├── bundle.py
+│   ├── debug_error.log
 │   ├── docker-compose.yml
 │   ├── Dockerfile
 │   ├── main.py
@@ -68,6 +69,11 @@
 │   │   ├── bm25_Ml101.pkl
 │   │   ├── bm25/
 │   │   ├── faiss_index/
+│   │   │   ├── string/
+│   │   │   ├── ts1/
+│   │   │   │   ├── index_meta.json
+│   │   │   ├── ts2/
+│   │   │   │   ├── index_meta.json
 │   │   ├── llama_index/
 │   │   │   ├── TEST_COURSE_V1/
 │   │   │   │   ├── default__vector_store.json
@@ -77,6 +83,12 @@
 │   │   │   │   ├── index_store.json
 │   │   ├── raw_docs/
 │   │   │   ├── .gitkeep
+│   │   │   ├── string/
+│   │   │   │   ├── sample.pdf
+│   │   │   ├── ts1/
+│   │   │   │   ├── sample.pdf
+│   │   │   ├── ts2/
+│   │   │   │   ├── sample.pdf
 │   │   ├── uploads/
 │   │   │   ├── test_scan.pdf
 │   ├── dummy_path/

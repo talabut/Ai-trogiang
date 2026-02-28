@@ -1,3 +1,4 @@
+# backend/rag/node_parser.py
 from typing import List, Dict, Any
 from backend.rag.chunking import chunk_single_text
 
@@ -12,6 +13,7 @@ CHUNK_OVERLAP = 100
 
 def parse_nodes(
     chunks: List[Dict[str, Any]],
+    doc_id: str,
     file_name: str,
 ):
     """
@@ -22,10 +24,12 @@ def parse_nodes(
     - chunk_id
     - index_version
     - file_name
+    - doc_id
     """
 
     assert isinstance(chunks, list)
     assert file_name
+    assert doc_id
 
     nodes = []
 
@@ -42,6 +46,7 @@ def parse_nodes(
                 "chunk_id": f"{file_name}_{i}",
                 "index_version": INGEST_VERSION,
                 "file_name": file_name,
+                "doc_id": doc_id,   # 🔥 thêm dòng này
             },
         })
 

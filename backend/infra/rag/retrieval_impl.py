@@ -1,3 +1,4 @@
+#backend/infra/rag/retrieval_impl.py
 import logging
 import json
 from typing import List
@@ -5,6 +6,7 @@ from pathlib import Path
 
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
 from llama_index.core.schema import NodeWithScore
+import backend.infra.rag.llama_settings
 
 from backend.rag.llama_ingest import get_index_path, INDEX_VERSION, EMBEDDING_MODEL_TAG
 

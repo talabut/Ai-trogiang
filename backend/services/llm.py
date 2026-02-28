@@ -1,15 +1,18 @@
 # backend/services/llm.py
-
+import os
 import requests
 
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "phi3:mini"
+# Lấy từ ENV, fallback về localhost nếu chạy local không qua docker
+OLLAMA_HOST = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# Lưu ý: Ollama API chuẩn là /api/generate
+OLLAMA_URL = f"{OLLAMA_HOST}/api/generate" 
+MODEL_NAME = "phi3:latest"
 
 
 def generate_answer(prompt: str) -> str:
     """
-    Generate answer from Ollama (phi3:mini).
+    Generate answer from Ollama (phi3:latest).
     Strict low-temperature config for RAG grounding.
     """
 

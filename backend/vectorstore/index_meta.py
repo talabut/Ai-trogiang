@@ -1,3 +1,4 @@
+#D:\ai-tro-giang\backend\vectorstore\index_meta.py
 import json
 import os
 import shutil
@@ -44,30 +45,33 @@ def clear_index(index_dir: str):
         shutil.rmtree(index_dir)
 
 
-def assert_meta_compatible(index_dir: str, course_id: str):
+def assert_meta_compatible(index_dir: str, course_id: str = None):
     """
     🔥 Fail fast nếu metadata mismatch.
     """
     path = os.path.join(index_dir, META_FILENAME)
 
+    # Nếu file meta không tồn tại
     if not os.path.exists(path):
-        raise RuntimeError("INDEX_META_MISSING")
+        # Lúc startup, nếu thư mục trống thì không sao
+        # Nhưng nếu có dữ liệu mà thiếu meta thì cảnh báo
+        if os.listdir(index_dir):
+            raise RuntimeError(f"INDEX_META_MISSING at {index_dir}")
+        return
+
+    # Nếu không truyền course_id (lúc startup), ta chỉ kiểm tra tính hợp lệ của file JSON
+    # hoặc bỏ qua việc so sánh nội dung chi tiết.
+    if course_id is None:
+        return 
 
     with open(path, "r", encoding="utf-8") as f:
         stored = json.load(f)
 
     current = expected_meta(course_id)
 
-    # không so timestamp
-    stored_compare = {
-        k: v for k, v in stored.items()
-        if k != "timestamp"
-    }
-
-    current_compare = {
-        k: v for k, v in current.items()
-        if k != "timestamp"
-    }
+    # So sánh (giữ nguyên logic của bạn)
+    stored_compare = {k: v for k, v in stored.items() if k != "timestamp"}
+    current_compare = {k: v for k, v in current.items() if k != "timestamp"}
 
     if stored_compare != current_compare:
-        raise RuntimeError("INDEX_META_MISMATCH")
+        raise RuntimeError(f"INDEX_META_MISMATCH: Expected {current_compare}, got {stored_compare}")

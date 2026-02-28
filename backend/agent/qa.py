@@ -1,21 +1,30 @@
+# backend/agent/qa.py
 from typing import Dict, Any
 
 
 class QAAgent:
     """
-    QAAgent KHÔNG tạo tri thức.
-    Nó chỉ:
-    - Nhận tool_result
-    - Kiểm tra trạng thái
-    - Pass-through hoặc từ chối
+    QAAgent:
+    - KHÔNG generate
+    - KHÔNG build prompt
+    - Chỉ kiểm tra retrieval result
     """
 
-    def answer(self, tool_result: Dict[str, Any]) -> Dict[str, Any]:
+    def answer(
+        self,
+        question: str,
+        tool_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+
         if tool_result is None:
-            raise RuntimeError("QAAgent: tool_result is REQUIRED. Agent cannot answer without tool.")
+            raise RuntimeError(
+                "QAAgent: tool_result is REQUIRED. Agent cannot answer without tool."
+            )
 
         status = tool_result.get("status")
-        if status != "FOUND":
+        evidences = tool_result.get("evidences", [])
+
+        if status != "FOUND" or not evidences:
             return {
                 "answer": None,
                 "confidence": 0.0,
@@ -24,11 +33,10 @@ class QAAgent:
                 "sources": []
             }
 
-        # TUYỆT ĐỐI không synthesize
         return {
-            "answer": tool_result.get("answer"),
-            "confidence": 1.0,
-            "reason": "FROM_DATABASE",
-            "evidences": tool_result.get("evidences", []),
+            "answer": None,  # LLM sẽ fill sau
+            "confidence": 0.5,
+            "reason": "EVIDENCE_FOUND",
+            "evidences": evidences,
             "sources": tool_result.get("sources", [])
         }

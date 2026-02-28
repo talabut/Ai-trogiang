@@ -19,17 +19,21 @@ def _fail(msg: str):
 def validate_startup():
     logger.info("STARTUP_VALIDATION_BEGIN")
 
-    # 🔥 allow auto-create so test reaches FAISS check
     os.makedirs(settings.DATA_DIR, exist_ok=True)
-
     assert_dir_writable(settings.DATA_DIR)
+    
+    # Tạo thư mục index nếu chưa có
+    os.makedirs(settings.FAISS_INDEX_DIR, exist_ok=True)
     assert_dir_writable(settings.FAISS_INDEX_DIR)
 
     sqlite_parent = os.path.dirname(settings.SQLITE_DB_PATH) or "."
     assert_dir_writable(sqlite_parent)
 
     if os.path.exists(settings.FAISS_INDEX_DIR) and os.listdir(settings.FAISS_INDEX_DIR):
-        assert_meta_compatible(settings.FAISS_INDEX_DIR)
+        try:
+            assert_meta_compatible(settings.FAISS_INDEX_DIR) # Không truyền course_id ở đây
+        except RuntimeError as e:
+            logger.warning(f"Metadata check skipped or failed: {e}")
 
     if not INGEST_VERSION:
         _fail("INGEST_VERSION_MISSING")

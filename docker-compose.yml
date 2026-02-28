@@ -1,17 +1,53 @@
-version: "3.9"
 
 services:
+  # --- Backend Service ---
   backend:
     build: .
+    container_name: ai_tro_giang_backend
     ports:
       - "8000:8000"
     volumes:
+      # Mount thư mục data để persist DB và Index
       - ./data:/app/data
-    env_file:
-      - .env
+      # Mount code để dev (optional, bỏ đi nếu chạy prod)
+      - ./backend:/app/backend
+      - ./main.py:/app/main.py
+    environment:
+      # Quan trọng: Trỏ sang service ollama bên dưới
+      - OLLAMA_BASE_URL=http://ollama:11434 
+      - MAX_CONCURRENT_INGEST=2
+    depends_on:
+      - ollama
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     restart: unless-stopped
+
+  # --- Ollama Service (LLM) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_tro_giang_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    # Tự động pull model khi khởi động (cần script wrapper) hoặc pull tay
+    # Để đơn giản: Sau khi up, bạn cần chạy: docker exec -it ai_tro_giang_ollama ollama pull phi3:mini
+    restart: always
+
+  # --- Frontend (Optional) ---
+  #frontend:
+  #  build: 
+  #    context: ./frontend
+  #    dockerfile: Dockerfile # Cần tạo Dockerfile cho frontend nếu muốn chạy docker
+  #  ports:
+   #   - "5173:5173"
+   # environment:
+   #   - VITE_API_BASE_URL=http://localhost:8000/api/v1
+   # depends_on:
+   #   - backend
+
+volumes:
+  ollama_storage:

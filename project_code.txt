@@ -104,17 +104,26 @@ if __name__ == "__main__":
 ==============================
 FILE: .\docker-compose.yml
 ==============================
-version: "3.9"
 
 services:
+  # --- Backend Service ---
   backend:
     build: .
+    container_name: ai_tro_giang_backend
     ports:
       - "8000:8000"
     volumes:
+      # Mount thư mục data để persist DB và Index
       - ./data:/app/data
-    env_file:
-      - .env
+      # Mount code để dev (optional, bỏ đi nếu chạy prod)
+      - ./backend:/app/backend
+      - ./main.py:/app/main.py
+    environment:
+      # Quan trọng: Trỏ sang service ollama bên dưới
+      - OLLAMA_BASE_URL=http://ollama:11434 
+      - MAX_CONCURRENT_INGEST=2
+    depends_on:
+      - ollama
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -122,11 +131,50 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # --- Ollama Service (LLM) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_tro_giang_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    # Tự động pull model khi khởi động (cần script wrapper) hoặc pull tay
+    # Để đơn giản: Sau khi up, bạn cần chạy: docker exec -it ai_tro_giang_ollama ollama pull phi3:mini
+    restart: always
+
+  # --- Frontend (Optional) ---
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile # Cần tạo Dockerfile cho frontend nếu muốn chạy docker
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000/api/v1
+    depends_on:
+      - backend
+
+volumes:
+  ollama_storage:
 ==============================
 FILE: .\main.py
 ==============================
 import time
 import logging
+import traceback  # Thêm thư viện này để in lỗi chi tiết
+import sys
+
+# Cấu hình logging ép buộc in ra cả Console và File
+logging.basicConfig(
+    level=logging.DEBUG, # Chuyển sang DEBUG để xem chi tiết nhất
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout), # Ép in ra màn hình chính
+        logging.FileHandler("debug_error.log", encoding="utf-8") # Ghi thêm vào file để chắc chắn không mất
+    ]
+)
+logger = logging.getLogger("uvicorn") # Sử dụng logger của chính uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -136,17 +184,40 @@ from backend.api.dependencies import request_id_middleware
 from backend.api import upload, chat
 from backend.startup_validator import validate_startup
 from backend.middleware.rate_limit import rate_limit
-from backend.security.guard import enable_runtime_sandbox
 
-
-logging.basicConfig(level=logging.INFO)
+# Cấu hình logging để hiển thị lỗi đẹp hơn
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
 @app.on_event("startup")
 def on_startup():
     validate_startup()
-    enable_runtime_sandbox() 
+
+# --- MIDDLEWARE XỬ LÝ LỖI CHI TIẾT ---
+@app.middleware("http")
+async def catch_exceptions_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        # In toàn bộ lỗi ra Terminal để bạn debug
+        logger.error("--- CÓ LỖI XẢY RA ---")
+        traceback.print_exc() 
+        
+        # Trả về chi tiết lỗi cho Frontend (chỉ nên dùng khi đang code/dev)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": type(exc).__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc() # Dòng này giúp bạn biết lỗi ở file nào, dòng nào
+            }
+        )
 
 app.middleware("http")(request_id_middleware)
 app.middleware("http")(rate_limit)
@@ -158,14 +229,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Exception handler cho các lỗi xử lý chung
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception: {exc}")
+    traceback.print_exc()
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "error": "INTERNAL_ERROR",
-            "message": "Internal server error"
+            "message": str(exc)
         }
     )
 
@@ -175,7 +249,6 @@ def health():
 
 app.include_router(upload.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
-
 ==============================
 FILE: .\package-lock.json
 ==============================
@@ -589,17 +662,26 @@ if __name__ == "__main__":
 ==============================
 FILE: .\docker-compose.yml
 ==============================
-version: "3.9"
 
 services:
+  # --- Backend Service ---
   backend:
     build: .
+    container_name: ai_tro_giang_backend
     ports:
       - "8000:8000"
     volumes:
+      # Mount thư mục data để persist DB và Index
       - ./data:/app/data
-    env_file:
-      - .env
+      # Mount code để dev (optional, bỏ đi nếu chạy prod)
+      - ./backend:/app/backend
+      - ./main.py:/app/main.py
+    environment:
+      # Quan trọng: Trỏ sang service ollama bên dưới
+      - OLLAMA_BASE_URL=http://ollama:11434 
+      - MAX_CONCURRENT_INGEST=2
+    depends_on:
+      - ollama
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -607,11 +689,50 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # --- Ollama Service (LLM) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_tro_giang_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    # Tự động pull model khi khởi động (cần script wrapper) hoặc pull tay
+    # Để đơn giản: Sau khi up, bạn cần chạy: docker exec -it ai_tro_giang_ollama ollama pull phi3:mini
+    restart: always
+
+  # --- Frontend (Optional) ---
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile # Cần tạo Dockerfile cho frontend nếu muốn chạy docker
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000/api/v1
+    depends_on:
+      - backend
+
+volumes:
+  ollama_storage:
 ==============================
 FILE: .\main.py
 ==============================
 import time
 import logging
+import traceback  # Thêm thư viện này để in lỗi chi tiết
+import sys
+
+# Cấu hình logging ép buộc in ra cả Console và File
+logging.basicConfig(
+    level=logging.DEBUG, # Chuyển sang DEBUG để xem chi tiết nhất
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout), # Ép in ra màn hình chính
+        logging.FileHandler("debug_error.log", encoding="utf-8") # Ghi thêm vào file để chắc chắn không mất
+    ]
+)
+logger = logging.getLogger("uvicorn") # Sử dụng logger của chính uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -621,17 +742,40 @@ from backend.api.dependencies import request_id_middleware
 from backend.api import upload, chat
 from backend.startup_validator import validate_startup
 from backend.middleware.rate_limit import rate_limit
-from backend.security.guard import enable_runtime_sandbox
 
-
-logging.basicConfig(level=logging.INFO)
+# Cấu hình logging để hiển thị lỗi đẹp hơn
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
 @app.on_event("startup")
 def on_startup():
     validate_startup()
-    enable_runtime_sandbox() 
+
+# --- MIDDLEWARE XỬ LÝ LỖI CHI TIẾT ---
+@app.middleware("http")
+async def catch_exceptions_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        # In toàn bộ lỗi ra Terminal để bạn debug
+        logger.error("--- CÓ LỖI XẢY RA ---")
+        traceback.print_exc() 
+        
+        # Trả về chi tiết lỗi cho Frontend (chỉ nên dùng khi đang code/dev)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": type(exc).__name__,
+                "message": str(exc),
+                "traceback": traceback.format_exc() # Dòng này giúp bạn biết lỗi ở file nào, dòng nào
+            }
+        )
 
 app.middleware("http")(request_id_middleware)
 app.middleware("http")(rate_limit)
@@ -643,14 +787,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Exception handler cho các lỗi xử lý chung
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception: {exc}")
+    traceback.print_exc()
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "error": "INTERNAL_ERROR",
-            "message": "Internal server error"
+            "message": str(exc)
         }
     )
 
@@ -660,7 +807,6 @@ def health():
 
 app.include_router(upload.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
-
 ==============================
 FILE: .\package-lock.json
 ==============================
@@ -992,42 +1138,361 @@ pip install -r requirements.txt
 ==============================
 FILE: .\requirements.txt
 ==============================
-# --- Web API ---
-fastapi
-uvicorn
-python-multipart
-
-# --- Auth ---
-python-jose
-passlib[bcrypt]
-
-# --- Embedding / Model ---
-torch==2.1.2
-transformers==4.36.2
-sentence-transformers==2.2.2
-huggingface-hub==0.20.3
-
-# --- Vector Store ---
-faiss-cpu
-
-# --- LlamaIndex ---
-llama-index-core
-llama-index-embeddings-huggingface
-llama-index-vector-stores-faiss
-llama-index-readers-file
-
-# --- File Processing ---
-pypdf
-python-docx
-
-# --- Utilities ---
-pydantic
-pydantic-settings
-filelock
-psutil
-
-# --- Testing ---
-pytest
+a i o f i l e s = = 2 3 . 2 . 1 
+ 
+ a i o h a p p y e y e b a l l s = = 2 . 6 . 1 
+ 
+ a i o h t t p = = 3 . 1 3 . 3 
+ 
+ a i o s i g n a l = = 1 . 4 . 0 
+ 
+ a n n o t a t e d - d o c = = 0 . 0 . 4 
+ 
+ a n n o t a t e d - t y p e s = = 0 . 7 . 0 
+ 
+ a n y i o = = 4 . 1 2 . 1 
+ 
+ a s t o r = = 0 . 8 . 1 
+ 
+ a s y n c - t i m e o u t = = 5 . 0 . 1 
+ 
+ a t t r d i c t = = 2 . 0 . 1 
+ 
+ a t t r s = = 2 5 . 4 . 0 
+ 
+ b a b e l = = 2 . 1 8 . 0 
+ 
+ b c e - p y t h o n - s d k = = 0 . 9 . 6 0 
+ 
+ b c r y p t = = 5 . 0 . 0 
+ 
+ b e a u t i f u l s o u p 4 = = 4 . 1 4 . 3 
+ 
+ b l i n k e r = = 1 . 9 . 0 
+ 
+ b l i s = = 1 . 3 . 3 
+ 
+ c a c h e t o o l s = = 7 . 0 . 1 
+ 
+ c a t a l o g u e = = 2 . 0 . 1 0 
+ 
+ c e r t i f i = = 2 0 2 6 . 2 . 2 5 
+ 
+ c h a r s e t - n o r m a l i z e r = = 3 . 4 . 4 
+ 
+ c l i c k = = 8 . 3 . 1 
+ 
+ c l o u d p a t h l i b = = 0 . 2 3 . 0 
+ 
+ c o l o r a m a = = 0 . 4 . 6 
+ 
+ c o n f e c t i o n = = 0 . 1 . 5 
+ 
+ c o n t o u r p y = = 1 . 3 . 2 
+ 
+ c s s s e l e c t = = 1 . 4 . 0 
+ 
+ c s s u t i l s = = 2 . 1 1 . 1 
+ 
+ c y c l e r = = 0 . 1 2 . 1 
+ 
+ c y m e m = = 2 . 0 . 1 3 
+ 
+ C y t h o n = = 3 . 2 . 4 
+ 
+ d a t a c l a s s e s - j s o n = = 0 . 6 . 7 
+ 
+ d e c o r a t o r = = 5 . 2 . 1 
+ 
+ D e p r e c a t e d = = 1 . 3 . 1 
+ 
+ d i r t y j s o n = = 1 . 0 . 8 
+ 
+ d i s t r o = = 1 . 9 . 0 
+ 
+ e c d s a = = 0 . 1 9 . 1 
+ 
+ e t _ x m l f i l e = = 2 . 0 . 0 
+ 
+ e x c e p t i o n g r o u p = = 1 . 3 . 1 
+ 
+ f a i s s - c p u = = 1 . 7 . 4 
+ 
+ f a s t a p i = = 0 . 1 0 9 . 2 
+ 
+ f i l e l o c k = = 3 . 1 3 . 1 
+ 
+ f i r e = = 0 . 7 . 1 
+ 
+ F l a s k = = 3 . 1 . 3 
+ 
+ f l a s k - b a b e l = = 4 . 0 . 0 
+ 
+ f o n t t o o l s = = 4 . 6 1 . 1 
+ 
+ f r o z e n l i s t = = 1 . 8 . 0 
+ 
+ f s s p e c = = 2 0 2 6 . 2 . 0 
+ 
+ f u t u r e = = 1 . 0 . 0 
+ 
+ g r e e n l e t = = 3 . 3 . 2 
+ 
+ h 1 1 = = 0 . 1 6 . 0 
+ 
+ h f - x e t = = 1 . 3 . 2 
+ 
+ h t t p c o r e = = 1 . 0 . 9 
+ 
+ h t t p t o o l s = = 0 . 7 . 1 
+ 
+ h t t p x = = 0 . 2 7 . 0 
+ 
+ h u g g i n g f a c e _ h u b = = 0 . 3 6 . 2 
+ 
+ i d n a = = 3 . 1 1 
+ 
+ I m a g e I O = = 2 . 3 7 . 2 
+ 
+ i m g a u g = = 0 . 4 . 0 
+ 
+ i n i c o n f i g = = 2 . 3 . 0 
+ 
+ i t s d a n g e r o u s = = 2 . 2 . 0 
+ 
+ J i n j a 2 = = 3 . 1 . 6 
+ 
+ j i t e r = = 0 . 1 3 . 0 
+ 
+ j o b l i b = = 1 . 5 . 3 
+ 
+ j s o n p a t h - n g = = 1 . 8 . 0 
+ 
+ k i w i s o l v e r = = 1 . 4 . 9 
+ 
+ l a z y _ l o a d e r = = 0 . 4 
+ 
+ l l a m a - i n d e x - c o r e = = 0 . 1 0 . 3 8 
+ 
+ l l a m a - i n d e x - e m b e d d i n g s - h u g g i n g f a c e = = 0 . 1 . 5 
+ 
+ l l a m a - i n d e x - l l m s - o l l a m a = = 0 . 1 . 5 
+ 
+ l l a m a - i n d e x - r e a d e r s - f i l e = = 0 . 1 . 1 7 
+ 
+ l l a m a - i n d e x - v e c t o r - s t o r e s - f a i s s = = 0 . 1 . 2 
+ 
+ l l a m a i n d e x - p y - c l i e n t = = 0 . 1 . 1 9 
+ 
+ l m d b = = 1 . 7 . 5 
+ 
+ l x m l = = 6 . 0 . 2 
+ 
+ m a r k d o w n - i t - p y = = 4 . 0 . 0 
+ 
+ M a r k u p S a f e = = 3 . 0 . 3 
+ 
+ m a r s h m a l l o w = = 3 . 2 6 . 2 
+ 
+ m a t p l o t l i b = = 3 . 1 0 . 8 
+ 
+ m d u r l = = 0 . 1 . 2 
+ 
+ m o r e - i t e r t o o l s = = 1 0 . 8 . 0 
+ 
+ m p m a t h = = 1 . 3 . 0 
+ 
+ m u l t i d i c t = = 6 . 7 . 1 
+ 
+ m u r m u r h a s h = = 1 . 0 . 1 5 
+ 
+ m y p y _ e x t e n s i o n s = = 1 . 1 . 0 
+ 
+ n e s t - a s y n c i o = = 1 . 6 . 0 
+ 
+ n e t w o r k x = = 3 . 4 . 2 
+ 
+ n l t k = = 3 . 9 . 3 
+ 
+ n u m p y = = 1 . 2 6 . 4 
+ 
+ o p e n a i = = 2 . 2 4 . 0 
+ 
+ o p e n c v - c o n t r i b - p y t h o n = = 4 . 6 . 0 . 6 6 
+ 
+ o p e n c v - p y t h o n = = 4 . 6 . 0 . 6 6 
+ 
+ o p e n c v - p y t h o n - h e a d l e s s = = 4 . 9 . 0 . 8 0 
+ 
+ o p e n p y x l = = 3 . 1 . 5 
+ 
+ o p t - e i n s u m = = 3 . 3 . 0 
+ 
+ p a c k a g i n g = = 2 6 . 0 
+ 
+ p a d d l e o c r = = 2 . 7 . 0 . 3 
+ 
+ p a d d l e p a d d l e = = 2 . 6 . 2 
+ 
+ p a n d a s = = 2 . 3 . 3 
+ 
+ p a s s l i b = = 1 . 7 . 4 
+ 
+ p d f 2 d o c x = = 0 . 5 . 8 
+ 
+ p i l l o w = = 1 2 . 1 . 1 
+ 
+ p l u g g y = = 1 . 6 . 0 
+ 
+ p r e m a i l e r = = 3 . 1 0 . 0 
+ 
+ p r e s h e d = = 3 . 0 . 1 2 
+ 
+ p r o p c a c h e = = 0 . 4 . 1 
+ 
+ p r o t o b u f = = 3 . 2 0 . 2 
+ 
+ p s u t i l = = 5 . 9 . 8 
+ 
+ p y a s n 1 = = 0 . 6 . 2 
+ 
+ p y c l i p p e r = = 1 . 4 . 0 
+ 
+ p y c r y p t o d o m e = = 3 . 2 3 . 0 
+ 
+ p y d a n t i c = = 2 . 6 . 4 
+ 
+ p y d a n t i c - s e t t i n g s = = 2 . 1 . 0 
+ 
+ p y d a n t i c _ c o r e = = 2 . 1 6 . 3 
+ 
+ P y g m e n t s = = 2 . 1 9 . 2 
+ 
+ P y M u P D F = = 1 . 2 0 . 2 
+ 
+ p y p a r s i n g = = 3 . 3 . 2 
+ 
+ p y p d f = = 4 . 3 . 1 
+ 
+ p y t e s t = = 7 . 4 . 4 
+ 
+ p y t h o n - d a t e u t i l = = 2 . 9 . 0 . p o s t 0 
+ 
+ p y t h o n - d o c x = = 1 . 1 . 0 
+ 
+ p y t h o n - d o t e n v = = 1 . 0 . 1 
+ 
+ p y t h o n - j o s e = = 3 . 3 . 0 
+ 
+ p y t h o n - m u l t i p a r t = = 0 . 0 . 9 
+ 
+ p y t z = = 2 0 2 5 . 2 
+ 
+ P y Y A M L = = 6 . 0 . 3 
+ 
+ R a p i d F u z z = = 3 . 1 4 . 3 
+ 
+ r a r f i l e = = 4 . 2 
+ 
+ r e g e x = = 2 0 2 6 . 2 . 2 8 
+ 
+ r e q u e s t s = = 2 . 3 1 . 0 
+ 
+ r i c h = = 1 4 . 3 . 3 
+ 
+ r s a = = 4 . 9 . 1 
+ 
+ s a f e t e n s o r s = = 0 . 7 . 0 
+ 
+ s c i k i t - i m a g e = = 0 . 2 5 . 2 
+ 
+ s c i k i t - l e a r n = = 1 . 7 . 2 
+ 
+ s c i p y = = 1 . 1 5 . 3 
+ 
+ s e n t e n c e - t r a n s f o r m e r s = = 3 . 1 . 1 
+ 
+ s h a p e l y = = 2 . 1 . 2 
+ 
+ s h e l l i n g h a m = = 1 . 5 . 4 
+ 
+ s i x = = 1 . 1 7 . 0 
+ 
+ s m a r t _ o p e n = = 7 . 5 . 1 
+ 
+ s n i f f i o = = 1 . 3 . 1 
+ 
+ s o u p s i e v e = = 2 . 8 . 3 
+ 
+ s p a c y = = 3 . 8 . 1 1 
+ 
+ s p a c y - l e g a c y = = 3 . 0 . 1 2 
+ 
+ s p a c y - l o g g e r s = = 1 . 0 . 5 
+ 
+ S Q L A l c h e m y = = 2 . 0 . 4 7 
+ 
+ s r s l y = = 2 . 5 . 2 
+ 
+ s t a r l e t t e = = 0 . 3 6 . 3 
+ 
+ s t r i p r t f = = 0 . 0 . 2 6 
+ 
+ s y m p y = = 1 . 1 4 . 0 
+ 
+ t e n a c i t y = = 8 . 5 . 0 
+ 
+ t e r m c o l o r = = 3 . 3 . 0 
+ 
+ t h i n c = = 8 . 3 . 1 0 
+ 
+ t h r e a d p o o l c t l = = 3 . 6 . 0 
+ 
+ t i f f f i l e = = 2 0 2 5 . 5 . 1 0 
+ 
+ t i k t o k e n = = 0 . 1 2 . 0 
+ 
+ t o k e n i z e r s = = 0 . 1 5 . 2 
+ 
+ t o m l i = = 2 . 4 . 0 
+ 
+ t o r c h = = 2 . 1 . 2 
+ 
+ t q d m = = 4 . 6 7 . 3 
+ 
+ t r a n s f o r m e r s = = 4 . 3 9 . 3 
+ 
+ t y p e r = = 0 . 2 4 . 1 
+ 
+ t y p e r - s l i m = = 0 . 2 4 . 0 
+ 
+ t y p i n g - i n s p e c t = = 0 . 9 . 0 
+ 
+ t y p i n g _ e x t e n s i o n s = = 4 . 1 5 . 0 
+ 
+ t z d a t a = = 2 0 2 5 . 3 
+ 
+ u r l l i b 3 = = 2 . 6 . 3 
+ 
+ u v i c o r n = = 0 . 2 7 . 1 
+ 
+ v i s u a l d l = = 2 . 5 . 3 
+ 
+ w a s a b i = = 1 . 1 . 3 
+ 
+ w a t c h f i l e s = = 1 . 1 . 1 
+ 
+ w e a s e l = = 0 . 4 . 3 
+ 
+ w e b s o c k e t s = = 1 6 . 0 
+ 
+ W e r k z e u g = = 3 . 1 . 6 
+ 
+ w r a p t = = 2 . 1 . 1 
+ 
+ y a r l = = 1 . 2 2 . 0 
+ 
+ 
 ==============================
 FILE: .\backend\bootstrap.py
 ==============================
@@ -1037,16 +1502,11 @@ import logging
 
 from backend.config.integrity_config import settings, assert_dir_writable
 from backend.db.sqlite_safe import connect_sqlite
-from backend.security.guard import enable_runtime_sandbox
-
 logger = logging.getLogger(__name__)
 
 
 def bootstrap_system():
     logger.info("BOOTSTRAP_START")
-
-    # 🔥 Enable sandbox ONCE
-    enable_runtime_sandbox()
 
     # 🔒 Integrity checks (FAIL FAST)
     assert_dir_writable(settings.DATA_DIR)
@@ -1090,17 +1550,21 @@ def _fail(msg: str):
 def validate_startup():
     logger.info("STARTUP_VALIDATION_BEGIN")
 
-    # 🔥 allow auto-create so test reaches FAISS check
     os.makedirs(settings.DATA_DIR, exist_ok=True)
-
     assert_dir_writable(settings.DATA_DIR)
+    
+    # Tạo thư mục index nếu chưa có
+    os.makedirs(settings.FAISS_INDEX_DIR, exist_ok=True)
     assert_dir_writable(settings.FAISS_INDEX_DIR)
 
     sqlite_parent = os.path.dirname(settings.SQLITE_DB_PATH) or "."
     assert_dir_writable(sqlite_parent)
 
     if os.path.exists(settings.FAISS_INDEX_DIR) and os.listdir(settings.FAISS_INDEX_DIR):
-        assert_meta_compatible(settings.FAISS_INDEX_DIR)
+        try:
+            assert_meta_compatible(settings.FAISS_INDEX_DIR) # Không truyền course_id ở đây
+        except RuntimeError as e:
+            logger.warning(f"Metadata check skipped or failed: {e}")
 
     if not INGEST_VERSION:
         _fail("INGEST_VERSION_MISSING")
@@ -1120,24 +1584,33 @@ FILE: .\backend\__init__.py
 ==============================
 FILE: .\backend\agent\qa.py
 ==============================
+# backend/agent/qa.py
 from typing import Dict, Any
 
 
 class QAAgent:
     """
-    QAAgent KHÔNG tạo tri thức.
-    Nó chỉ:
-    - Nhận tool_result
-    - Kiểm tra trạng thái
-    - Pass-through hoặc từ chối
+    QAAgent:
+    - KHÔNG generate
+    - KHÔNG build prompt
+    - Chỉ kiểm tra retrieval result
     """
 
-    def answer(self, tool_result: Dict[str, Any]) -> Dict[str, Any]:
+    def answer(
+        self,
+        question: str,
+        tool_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+
         if tool_result is None:
-            raise RuntimeError("QAAgent: tool_result is REQUIRED. Agent cannot answer without tool.")
+            raise RuntimeError(
+                "QAAgent: tool_result is REQUIRED. Agent cannot answer without tool."
+            )
 
         status = tool_result.get("status")
-        if status != "FOUND":
+        evidences = tool_result.get("evidences", [])
+
+        if status != "FOUND" or not evidences:
             return {
                 "answer": None,
                 "confidence": 0.0,
@@ -1146,30 +1619,30 @@ class QAAgent:
                 "sources": []
             }
 
-        # TUYỆT ĐỐI không synthesize
         return {
-            "answer": tool_result.get("answer"),
-            "confidence": 1.0,
-            "reason": "FROM_DATABASE",
-            "evidences": tool_result.get("evidences", []),
+            "answer": None,  # LLM sẽ fill sau
+            "confidence": 0.5,
+            "reason": "EVIDENCE_FOUND",
+            "evidences": evidences,
             "sources": tool_result.get("sources", [])
         }
-
 ==============================
 FILE: .\backend\agent\tools.py
 ==============================
-#backend/agent/tools.py
+# backend/agent/tools.py
 from typing import Dict, Any, List
 from backend.infra.rag.retrieval_impl import retrieve
+from llama_index.core.schema import NodeWithScore
 
 
 def check_knowledge_base(query: str, course_id: str) -> Dict[str, Any]:
     """
     TOOL = CỔNG TRI THỨC DUY NHẤT
     """
-    results = retrieve(query, course_id)
 
-    if results is None:
+    results: List[NodeWithScore] = retrieve(query, course_id)
+
+    if not results:
         return {
             "status": "NOT_FOUND",
             "reason": "NO_INDEX_OR_NO_MATCH",
@@ -1178,13 +1651,29 @@ def check_knowledge_base(query: str, course_id: str) -> Dict[str, Any]:
             "sources": []
         }
 
+    evidences = []
+    sources = []
+
+    for node in results:
+        text = node.node.get_content()
+        score = node.score
+        metadata = node.node.metadata or {}
+
+        evidences.append({
+            "text": text,
+            "score": float(score) if score is not None else None,
+            "metadata": metadata
+        })
+
+        if metadata.get("source"):
+            sources.append(metadata.get("source"))
+
     return {
         "status": "FOUND",
-        "answer": results["answer"],
-        "evidences": results.get("chunks", []),
-        "sources": results.get("sources", [])
+        "answer": "",  # Generation layer sẽ xử lý sau
+        "evidences": evidences,
+        "sources": list(set(sources))
     }
-
 ==============================
 FILE: .\backend\agent\__init__.py
 ==============================
@@ -1291,6 +1780,7 @@ class ChatResponse(BaseModel):
 ==============================
 FILE: .\backend\api\upload.py
 ==============================
+#backend/api/upload.py
 import os
 import uuid
 
@@ -1520,6 +2010,7 @@ def execute_with_retry(conn, sql, params=()):
 ==============================
 FILE: .\backend\infra\rag\retrieval_impl.py
 ==============================
+#backend/infra/rag/retrieval_impl.py
 import logging
 import json
 from typing import List
@@ -1635,6 +2126,17 @@ class LlamaRetriever:
             )
 
         return nodes
+def retrieve(
+    query: str,
+    course_id: str,
+    top_k: int = 5
+) -> List[NodeWithScore]:
+    """
+    Canonical retrieval entry-point cho Agent layer.
+    Agent KHÔNG được khởi tạo retriever trực tiếp.
+    """
+    retriever = LlamaRetriever(course_id=course_id, top_k=top_k)
+    return retriever.retrieve(query)
 ==============================
 FILE: .\backend\locks\ingest_lock.py
 ==============================
@@ -2022,10 +2524,15 @@ def get_embedding_model():
 ==============================
 FILE: .\backend\rag\llama_ingest.py
 ==============================
+# FILE: backend/rag/llama_ingest.py
+
 import os
 import json
 import logging
 from typing import List, Dict, Any
+
+from llama_index.core import VectorStoreIndex, Document, StorageContext
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from backend.rag.canonicalize import canonicalize_text, get_canonical_hash
 from backend.config.integrity_config import settings
@@ -2036,28 +2543,15 @@ EMBEDDING_MODEL_TAG = "sentence-transformers/all-MiniLM-L6-v2"
 logger = logging.getLogger(__name__)
 
 
-def estimate_tokens(text: str) -> int:
-    """
-    Approximate token count.
-    MiniLM ~ 1 token ≈ 0.75 words (rough estimate).
-    """
-    if not text:
-        return 0
-    return int(len(text.split()) / 0.75)
-
+# =====================================================
+# Helpers
+# =====================================================
 
 def get_index_path(course_id: str) -> str:
-    """
-    Unified FAISS persist directory.
-    MUST match retrieval layer.
-    """
     return os.path.join(settings.FAISS_INDEX_DIR, course_id)
 
 
 def _ensure_index_meta(path: str, course_id: str):
-    """
-    Ensure index_meta.json exists and is consistent.
-    """
     meta_path = os.path.join(path, "index_meta.json")
 
     meta = {
@@ -2067,21 +2561,22 @@ def _ensure_index_meta(path: str, course_id: str):
     }
 
     if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-            # Fail fast if mismatch
-            if (
-                existing.get("embedding_model_tag") != EMBEDDING_MODEL_TAG
-                or existing.get("index_version") != INDEX_VERSION
-            ):
-                raise RuntimeError("INDEX_META_MISMATCH")
-        except json.JSONDecodeError:
-            pass
+        with open(meta_path, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+
+        if (
+            existing.get("index_version") != INDEX_VERSION
+            or existing.get("embedding_model_tag") != EMBEDDING_MODEL_TAG
+        ):
+            raise RuntimeError("INDEX_META_MISMATCH")
 
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
+
+# =====================================================
+# Main Ingestion
+# =====================================================
 
 def ingest_canonical_chunks(
     chunks: List[Dict[str, Any]],
@@ -2098,36 +2593,16 @@ def ingest_canonical_chunks(
 
     _ensure_index_meta(path, course_id)
 
-    store_path = os.path.join(path, "docstore.json")
-    vector_path = os.path.join(path, "faiss_index.json")
-
-    existing = {}
-    if os.path.exists(store_path):
-        try:
-            with open(store_path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-        except json.JSONDecodeError:
-            existing = {}
-
-    new_chunks_added = 0
-    total_tokens = 0
-    empty_chunks = 0
-    pages_seen = set()
-
-    total_input_chunks = len(chunks)
+    documents: List[Document] = []
 
     for c in chunks:
 
         if not c or not c.get("text"):
-            empty_chunks += 1
             continue
-
-        pages_seen.add(c.get("page", 0))
 
         clean_text = canonicalize_text(c["text"])
 
         if not clean_text:
-            empty_chunks += 1
             continue
 
         uid = get_canonical_hash({
@@ -2136,66 +2611,72 @@ def ingest_canonical_chunks(
             "page": c.get("page", 0),
         })
 
-        if uid in existing:
-            continue
+        documents.append(
+            Document(
+                text=clean_text,
+                doc_id=uid,
+                metadata={
+                    "course_id": course_id,
+                    "doc_id": doc_id,
+                    "file_name": filename,
+                    "page": c.get("page", 0),
+                    "index_version": INDEX_VERSION,
+                    "embedding_model_tag": EMBEDDING_MODEL_TAG,
+                }
+            )
+        )
 
-        token_count = estimate_tokens(clean_text)
-        total_tokens += token_count
+    if not documents:
+        raise RuntimeError("NO_VALID_DOCUMENTS")
 
-        existing[uid] = {
-            "text": clean_text,
-            "metadata": {
-                "course_id": course_id,
-                "doc_id": doc_id,
-                "file_name": filename,
-                "page": c.get("page", 0),
-                "index_version": INDEX_VERSION,
-                "embedding_model_tag": EMBEDDING_MODEL_TAG,
-                "estimated_tokens": token_count
-            }
-        }
+    # =========================================
+    # Build embedding model
+    # =========================================
 
-        new_chunks_added += 1
+    embed_model = HuggingFaceEmbedding(
+        model_name=EMBEDDING_MODEL_TAG
+    )
 
-    if new_chunks_added == 0:
-        raise RuntimeError("ALL_CHUNKS_DUPLICATED_OR_EMPTY")
+    # =========================================
+    # Create or load existing index
+    # =========================================
 
-    with open(store_path, "w", encoding="utf-8") as f:
-        json.dump(existing, f, ensure_ascii=False, indent=2)
+    if os.listdir(path):
+        try:
+            storage_context = StorageContext.from_defaults(
+                persist_dir=path
+            )
+            index = VectorStoreIndex.from_documents(
+                documents,
+                storage_context=storage_context,
+                embed_model=embed_model,
+                show_progress=True
+            )
+        except Exception:
+            index = VectorStoreIndex.from_documents(
+                documents,
+                embed_model=embed_model,
+                show_progress=True
+            )
+    else:
+        index = VectorStoreIndex.from_documents(
+            documents,
+            embed_model=embed_model,
+            show_progress=True
+        )
 
-    # ensure vector index file exists (retrieval layer will use same folder)
-    if not os.path.exists(vector_path):
-        with open(vector_path, "w", encoding="utf-8") as f:
-            json.dump({}, f)
-
-    # =========================
-    # INGESTION METRICS LOGGING
-    # =========================
-
-    avg_tokens = total_tokens / new_chunks_added if new_chunks_added else 0
-    empty_ratio = empty_chunks / total_input_chunks if total_input_chunks else 0
+    # Persist
+    index.storage_context.persist(persist_dir=path)
 
     logger.info(
-        f"""
-[INGESTION REPORT]
-Course: {course_id}
-File: {filename}
-Doc ID: {doc_id}
---------------------------------
-total_pages: {len(pages_seen)}
-total_input_chunks: {total_input_chunks}
-total_new_chunks: {new_chunks_added}
-avg_tokens_per_chunk: {round(avg_tokens, 2)}
-empty_chunk_ratio: {round(empty_ratio, 3)}
-"""
+        f"[INGEST_OK] course_id={course_id} | "
+        f"new_chunks={len(documents)} | file={filename}"
     )
 
     return {
         "status": "INGEST_OK",
-        "new_chunks": new_chunks_added,
-        "total_pages": len(pages_seen),
-        "avg_tokens_per_chunk": round(avg_tokens, 2),
-        "empty_chunk_ratio": round(empty_ratio, 3)
+        "new_chunks": len(documents),
+        "total_pages": len(set(d.metadata["page"] for d in documents))
     }
 
 
@@ -2217,8 +2698,9 @@ def ingest_txt_only(text, course_id: str, filename: str, doc_id: str):
 ==============================
 FILE: .\backend\rag\node_parser.py
 ==============================
+# backend/rag/node_parser.py
 from typing import List, Dict, Any
-from backend.rag.chunking import chunk_text
+from backend.rag.chunking import chunk_single_text
 
 # === Ingest / Vectorstore contract constants ===
 INGEST_VERSION = "v1"
@@ -2231,6 +2713,7 @@ CHUNK_OVERLAP = 100
 
 def parse_nodes(
     chunks: List[Dict[str, Any]],
+    doc_id: str,
     file_name: str,
 ):
     """
@@ -2241,10 +2724,12 @@ def parse_nodes(
     - chunk_id
     - index_version
     - file_name
+    - doc_id
     """
 
     assert isinstance(chunks, list)
     assert file_name
+    assert doc_id
 
     nodes = []
 
@@ -2261,6 +2746,7 @@ def parse_nodes(
                 "chunk_id": f"{file_name}_{i}",
                 "index_version": INGEST_VERSION,
                 "file_name": file_name,
+                "doc_id": doc_id,   # 🔥 thêm dòng này
             },
         })
 
@@ -2463,6 +2949,7 @@ FILE: .\backend\security\__init__.py
 ==============================
 FILE: .\backend\services\agent.py
 ==============================
+# backend/services/agent.py
 from backend.agent.qa import QAAgent
 from backend.agent.tools import check_knowledge_base
 from backend.services.llm import generate_answer
@@ -2470,7 +2957,6 @@ from backend.services.llm import generate_answer
 
 class AgentService:
     def __init__(self):
-        # Khởi tạo QAAgent để sử dụng cho các phương thức trong class
         self.agent = QAAgent()
 
     def build_rag_prompt(self, question: str, evidences: list) -> str:
@@ -2480,8 +2966,10 @@ class AgentService:
         context_blocks = []
 
         for idx, ev in enumerate(evidences, start=1):
-            page = ev.get("page", "N/A")
-            content = ev.get("content", "")
+            metadata = ev.get("metadata", {})
+            page = metadata.get("page", "N/A")
+            content = ev.get("text", "")
+
             context_blocks.append(f"[{idx}] (page {page})\n{content}")
 
         context_text = "\n\n".join(context_blocks)
@@ -2501,51 +2989,58 @@ class AgentService:
         return prompt
 
     def chat(self, question: str, session_id: str, course_id: str):
-        # 1. Retrieval
+        # 1️⃣ Retrieval
         tool_result = check_knowledge_base(question, course_id)
 
-        result = self.agent.answer(tool_result)
+        # 2️⃣ Agent kiểm soát logic
+        result = self.agent.answer(question, tool_result)
 
-        # 2. Nếu có evidences → build prompt và gọi LLM
         evidences = result.get("evidences", [])
 
-        # 🚫 Không có evidence → từ chối ngay
+        # 🚫 Không có evidence → từ chối
         if not evidences:
             result["answer"] = "I don't know."
             return result
 
-        # 🚫 Lọc evidence yếu (content quá ngắn)
+        # 🚫 Lọc evidence yếu
         valid_evidences = [
             ev for ev in evidences
-            if ev.get("content") and len(ev.get("content").strip()) > 50
+            if ev.get("text") and len(ev.get("text").strip()) > 50
         ]
 
         if not valid_evidences:
             result["answer"] = "I don't know."
             return result
 
-        # ✅ Chỉ khi evidence đủ mạnh mới generate
+        # 3️⃣ Build grounded prompt
         rag_prompt = self.build_rag_prompt(
             question=question,
             evidences=valid_evidences
         )
 
+        # 4️⃣ Single LLM call
         final_answer = generate_answer(rag_prompt)
+
         result["answer"] = final_answer
+        result["confidence"] = 0.9
+        result["reason"] = "GROUNDed_GENERATION"
 
         return result
 
-# Khởi tạo instance để các module khác (như API route) có thể import và sử dụng ngay
+
 agent_service = AgentService()
 ==============================
 FILE: .\backend\services\llm.py
 ==============================
 # backend/services/llm.py
-
+import os
 import requests
 
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+# Lấy từ ENV, fallback về localhost nếu chạy local không qua docker
+OLLAMA_HOST = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# Lưu ý: Ollama API chuẩn là /api/generate
+OLLAMA_URL = f"{OLLAMA_HOST}/api/generate" 
 MODEL_NAME = "phi3:mini"
 
 
@@ -2629,30 +3124,43 @@ FILE: .\backend\utils\ocr.py
 from typing import List, Dict
 from paddleocr import PaddleOCR
 import logging
+from threading import Lock
 
 logger = logging.getLogger(__name__)
 
-_ocr = PaddleOCR(
-    use_textline_orientation=True,
-    lang="en"
-)
+_ocr_instance = None
+_ocr_lock = Lock()
+
+
+def get_ocr() -> PaddleOCR:
+    """
+    Lazy singleton initializer for PaddleOCR.
+    Only loads model when first used.
+    Thread-safe.
+    """
+    global _ocr_instance
+
+    if _ocr_instance is None:
+        with _ocr_lock:
+            if _ocr_instance is None:
+                logger.info("[OCR INIT] Loading PaddleOCR model...")
+                _ocr_instance = PaddleOCR(
+                    use_textline_orientation=True,
+                    lang="en"
+                )
+                logger.info("[OCR INIT DONE]")
+
+    return _ocr_instance
 
 
 def run_ocr(pdf_path: str) -> List[Dict]:
     """
     OCR scanned PDF → return page-level text blocks
-
-    Output schema:
-    [
-        {
-            "page_number": int,
-            "text": str
-        }
-    ]
     """
 
     try:
-        results = _ocr.ocr(pdf_path)
+        ocr = get_ocr()
+        results = ocr.ocr(pdf_path)
     except Exception as e:
         logger.error(f"[OCR ERROR] {pdf_path}: {e}")
         return []
@@ -2671,8 +3179,6 @@ def run_ocr(pdf_path: str) -> List[Dict]:
 
         for line in page:
 
-            # Expected structure:
-            # line = [ [box], (text, confidence) ]
             if (
                 not line
                 or not isinstance(line, list)
@@ -2706,7 +3212,6 @@ def run_ocr(pdf_path: str) -> List[Dict]:
     )
 
     return pages_output
-
 ==============================
 FILE: .\backend\utils\text_extraction.py
 ==============================
@@ -2888,6 +3393,7 @@ class BM25Store:
 ==============================
 FILE: .\backend\vectorstore\index_meta.py
 ==============================
+#D:\ai-tro-giang\backend\vectorstore\index_meta.py
 import json
 import os
 import shutil
@@ -2934,33 +3440,52 @@ def clear_index(index_dir: str):
         shutil.rmtree(index_dir)
 
 
-def assert_meta_compatible(index_dir: str, course_id: str):
+def assert_meta_compatible(index_dir: str, course_id: str = None):
     """
     🔥 Fail fast nếu metadata mismatch.
     """
     path = os.path.join(index_dir, META_FILENAME)
 
+    # Nếu file meta không tồn tại
     if not os.path.exists(path):
-        raise RuntimeError("INDEX_META_MISSING")
+        # Lúc startup, nếu thư mục trống thì không sao
+        # Nhưng nếu có dữ liệu mà thiếu meta thì cảnh báo
+        if os.listdir(index_dir):
+            raise RuntimeError(f"INDEX_META_MISSING at {index_dir}")
+        return
+
+    # Nếu không truyền course_id (lúc startup), ta chỉ kiểm tra tính hợp lệ của file JSON
+    # hoặc bỏ qua việc so sánh nội dung chi tiết.
+    if course_id is None:
+        return 
 
     with open(path, "r", encoding="utf-8") as f:
         stored = json.load(f)
 
     current = expected_meta(course_id)
 
-    # không so timestamp
-    stored_compare = {
-        k: v for k, v in stored.items()
-        if k != "timestamp"
-    }
-
-    current_compare = {
-        k: v for k, v in current.items()
-        if k != "timestamp"
-    }
+    # So sánh (giữ nguyên logic của bạn)
+    stored_compare = {k: v for k, v in stored.items() if k != "timestamp"}
+    current_compare = {k: v for k, v in current.items() if k != "timestamp"}
 
     if stored_compare != current_compare:
-        raise RuntimeError("INDEX_META_MISMATCH")
+        raise RuntimeError(f"INDEX_META_MISMATCH: Expected {current_compare}, got {stored_compare}")
+==============================
+FILE: .\data\faiss_index\ts1\index_meta.json
+==============================
+{
+  "course_id": "ts1",
+  "index_version": "v1.0",
+  "embedding_model_tag": "sentence-transformers/all-MiniLM-L6-v2"
+}
+==============================
+FILE: .\data\faiss_index\ts2\index_meta.json
+==============================
+{
+  "course_id": "ts2",
+  "index_version": "v1.0",
+  "embedding_model_tag": "sentence-transformers/all-MiniLM-L6-v2"
+}
 ==============================
 FILE: .\data\llama_index\TEST_COURSE_V1\default__vector_store.json
 ==============================

@@ -1,3 +1,4 @@
+# backend/services/agent.py
 from backend.agent.qa import QAAgent
 from backend.agent.tools import check_knowledge_base
 from backend.services.llm import generate_answer
@@ -5,7 +6,6 @@ from backend.services.llm import generate_answer
 
 class AgentService:
     def __init__(self):
-        # Khởi tạo QAAgent để sử dụng cho các phương thức trong class
         self.agent = QAAgent()
 
     def build_rag_prompt(self, question: str, evidences: list) -> str:
@@ -15,8 +15,10 @@ class AgentService:
         context_blocks = []
 
         for idx, ev in enumerate(evidences, start=1):
-            page = ev.get("page", "N/A")
-            content = ev.get("content", "")
+            metadata = ev.get("metadata", {})
+            page = metadata.get("page", "N/A")
+            content = ev.get("text", "")
+
             context_blocks.append(f"[{idx}] (page {page})\n{content}")
 
         context_text = "\n\n".join(context_blocks)
@@ -36,39 +38,43 @@ class AgentService:
         return prompt
 
     def chat(self, question: str, session_id: str, course_id: str):
-        # 1. Retrieval
+        # 1️⃣ Retrieval
         tool_result = check_knowledge_base(question, course_id)
 
-        result = self.agent.answer(tool_result)
+        # 2️⃣ Agent kiểm soát logic
+        result = self.agent.answer(question, tool_result)
 
-        # 2. Nếu có evidences → build prompt và gọi LLM
         evidences = result.get("evidences", [])
 
-        # 🚫 Không có evidence → từ chối ngay
+        # 🚫 Không có evidence → từ chối
         if not evidences:
             result["answer"] = "I don't know."
             return result
 
-        # 🚫 Lọc evidence yếu (content quá ngắn)
+        # 🚫 Lọc evidence yếu
         valid_evidences = [
             ev for ev in evidences
-            if ev.get("content") and len(ev.get("content").strip()) > 50
+            if ev.get("text") and len(ev.get("text").strip()) > 50
         ]
 
         if not valid_evidences:
             result["answer"] = "I don't know."
             return result
 
-        # ✅ Chỉ khi evidence đủ mạnh mới generate
+        # 3️⃣ Build grounded prompt
         rag_prompt = self.build_rag_prompt(
             question=question,
             evidences=valid_evidences
         )
 
+        # 4️⃣ Single LLM call
         final_answer = generate_answer(rag_prompt)
+
         result["answer"] = final_answer
+        result["confidence"] = 0.9
+        result["reason"] = "GROUNDed_GENERATION"
 
         return result
 
-# Khởi tạo instance để các module khác (như API route) có thể import và sử dụng ngay
+
 agent_service = AgentService()

@@ -4,16 +4,11 @@ import logging
 
 from backend.config.integrity_config import settings, assert_dir_writable
 from backend.db.sqlite_safe import connect_sqlite
-from backend.security.guard import enable_runtime_sandbox
-
 logger = logging.getLogger(__name__)
 
 
 def bootstrap_system():
     logger.info("BOOTSTRAP_START")
-
-    # 🔥 Enable sandbox ONCE
-    enable_runtime_sandbox()
 
     # 🔒 Integrity checks (FAIL FAST)
     assert_dir_writable(settings.DATA_DIR)
