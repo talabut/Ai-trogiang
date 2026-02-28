@@ -1,36 +1,36 @@
+# --- Web API ---
 fastapi
 uvicorn
 python-multipart
+
+# --- Auth ---
 python-jose
 passlib[bcrypt]
 
-langchain-core
-langchain-community
-langchain-text-splitters
+# --- Embedding / Model ---
+torch==2.1.2
+transformers==4.36.2
+sentence-transformers==2.2.2
+huggingface-hub==0.20.3
+
+# --- Vector Store ---
 faiss-cpu
-sentence-transformers
-transformers
-torch
-pypdf
-python-docx
 
-# --- OCR & PDF Processing ---
-pdf2image
-paddlepaddle>=2.6.2
-paddleocr>=2.7.0
-opencv-python-headless
-
-# ... các thư viện cũ ...
+# --- LlamaIndex ---
 llama-index-core
 llama-index-embeddings-huggingface
 llama-index-vector-stores-faiss
 llama-index-readers-file
 
-fastapi
-uvicorn
+# --- File Processing ---
+pypdf
+python-docx
+
+# --- Utilities ---
 pydantic
 pydantic-settings
 filelock
 psutil
-faiss-cpu
+
+# --- Testing ---
 pytest

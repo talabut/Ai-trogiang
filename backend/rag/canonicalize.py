@@ -1,6 +1,8 @@
 # backend/rag/canonicalize.py
+
 import hashlib
 import json
+import re
 import unicodedata
 from typing import Dict, List
 
@@ -9,50 +11,78 @@ class FatalError(Exception):
     pass
 
 
+MIN_PARAGRAPH_LENGTH = 20  # tránh fragment 1–2 ký tự
+
+
 def canonicalize_text(text: str) -> str:
     """
-    Canonicalize raw extracted text into a normalized format
-    for downstream chunking and indexing.
+    Canonicalize extracted text into paragraph blocks.
+
+    - Merge broken OCR lines into paragraphs
+    - Remove tiny fragments
+    - Normalize unicode
+    - Collapse excessive whitespace
     """
+
     if not text:
         return ""
 
-    lines = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            lines.append(line)
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{2,}", "\n\n", text)
 
-    return "\n".join(lines)
+    raw_blocks = text.split("\n\n")
 
+    paragraphs = []
 
-def get_canonical_hash(chunk: Dict) -> str:
-    text = unicodedata.normalize("NFKC", chunk["text"].strip())
-    text = " ".join(text.split())
+    for block in raw_blocks:
+        block = block.strip()
+        block = re.sub(r"\n", " ", block)
+        block = " ".join(block.split())
 
-    canonical_obj = {
-        "doc_id": chunk["doc_id"],
-        "text": text,
-        "page": chunk["page"],
-        "line_start": chunk["line_start"],
-        "line_end": chunk["line_end"],
-    }
+        if len(block) < MIN_PARAGRAPH_LENGTH:
+            continue
 
-    raw = json.dumps(canonical_obj, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+        paragraphs.append(block)
+
+    return "\n\n".join(paragraphs)
 
 
-def deduplicate_chunks(chunks: List[Dict], existing_hashes: set) -> List[Dict]:
-    unique = []
+def canonicalize_document(text: str, source: str) -> List[Dict]:
+    """
+    🔥 BẮT BUỘC: Convert raw extracted text → canonical format
+    Output tương thích 100% với chunk_canonical_data()
 
-    for chunk in chunks:
-        h = get_canonical_hash(chunk)
+    Return format:
+    [
+        {
+            "page": int,
+            "source": str,
+            "lines": [str, str, ...]
+        }
+    ]
+    """
 
-        if h in existing_hashes:
-            raise FatalError(f"DUPLICATE_CHUNK_DETECTED: {h}")
+    clean = canonicalize_text(text)
 
-        existing_hashes.add(h)
-        chunk["content_hash"] = h
-        unique.append(chunk)
+    if not clean:
+        raise FatalError("CANONICAL_EMPTY_AFTER_CLEAN")
 
-    return unique
+    paragraphs = clean.split("\n\n")
+
+    return [
+        {
+            "page": 1,
+            "source": source,
+            "lines": paragraphs
+        }
+    ]
+
+
+def get_canonical_hash(data: Dict) -> str:
+    """
+    Stable deterministic hash for chunk identity.
+    Ensures identical content generates identical ID.
+    """
+    normalized = json.dumps(data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()

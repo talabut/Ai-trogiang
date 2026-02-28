@@ -9,6 +9,7 @@
 │   ├── README.md
 │   ├── requirements.txt
 │   ├── .ingest_locks/
+│   │   ├── string.lock
 │   ├── backend/
 │   │   ├── bootstrap.py
 │   │   ├── startup_validator.py
@@ -30,8 +31,6 @@
 │   │   │   ├── __init__.py
 │   │   ├── core/
 │   │   │   ├── interfaces.py
-│   │   ├── data/
-│   │   │   ├── raw_docs/
 │   │   ├── db/
 │   │   │   ├── sqlite_safe.py
 │   │   ├── infra/
@@ -54,14 +53,15 @@
 │   │   │   ├── __init__.py
 │   │   ├── services/
 │   │   │   ├── agent.py
+│   │   │   ├── llm.py
+│   │   ├── test/
+│   │   │   ├── test_retrieval_debug.py
 │   │   ├── utils/
 │   │   │   ├── memory_guard.py
 │   │   │   ├── ocr.py
 │   │   │   ├── text_extraction.py
 │   │   ├── vectorstore/
-│   │   │   ├── atomic_persist.py
 │   │   │   ├── bm25_store.py
-│   │   │   ├── faiss_store.py
 │   │   │   ├── index_meta.py
 │   ├── data/
 │   │   ├── app_database.db
@@ -112,3 +112,4 @@
 │   │   │   ├── sample.pdf
 │   ├── uploads/
 │   │   ├── test_knowledge.txt
+│   ├── vectorstore/

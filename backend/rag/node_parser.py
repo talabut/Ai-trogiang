@@ -1,55 +1,48 @@
-
 from typing import List, Dict, Any
-from backend.rag.chunking import strict_chunk_text
-
+from backend.rag.chunking import chunk_single_text
 
 # === Ingest / Vectorstore contract constants ===
 INGEST_VERSION = "v1"
 EMBEDDING_MODEL_TAG = "default"
 
-# Chunking contract (MUST match chunking.py)
+# Chunking contract (must align with chunking.py config)
 CHUNK_SIZE = 512
-CHUNK_OVERLAP = 50
+CHUNK_OVERLAP = 100
+
 
 def parse_nodes(
-    text: str,
+    chunks: List[Dict[str, Any]],
     file_name: str,
-    metadata_pages: List[Dict[str, Any]],
 ):
     """
-    Mỗi node BẮT BUỘC có:
+    Each node must include:
     - page
-    - line_start
-    - line_end
+    - start_char
+    - end_char
+    - chunk_id
+    - index_version
     - file_name
     """
 
-    assert isinstance(text, str)
+    assert isinstance(chunks, list)
     assert file_name
 
     nodes = []
-    chunks = strict_chunk_text(text)
 
-    for chunk in chunks:
-        page_meta = _match_page_metadata(chunk, metadata_pages)
+    for i, chunk in enumerate(chunks):
 
-        assert page_meta is not None, "Missing OCR metadata"
+        chunk_text_value = chunk["text"]
 
         nodes.append({
-            "text": chunk,
+            "text": chunk_text_value,
             "metadata": {
-                "page": page_meta["page"],
-                "line_start": page_meta["line_start"],
-                "line_end": page_meta["line_end"],
+                "page": chunk.get("page", 1),
+                "start_char": 0,  # simplified for now
+                "end_char": len(chunk_text_value),
+                "chunk_id": f"{file_name}_{i}",
+                "index_version": INGEST_VERSION,
                 "file_name": file_name,
             },
         })
 
     return nodes
-
-
-def _match_page_metadata(chunk: str, pages: List[Dict[str, Any]]):
-    for page in pages:
-        if page["text"] in chunk:
-            return page
-    return None

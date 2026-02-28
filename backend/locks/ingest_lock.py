@@ -1,4 +1,5 @@
 # backend/locks/ingest_lock.py
+
 import os
 from contextlib import contextmanager
 from filelock import FileLock, Timeout
@@ -10,25 +11,24 @@ class IngestLocked(Exception):
     pass
 
 
-def acquire_ingest_lock(course_id: str, timeout: int = 1):
+def _lock_path(course_id: str) -> str:
     os.makedirs(LOCK_ROOT, exist_ok=True)
-    lock_path = os.path.join(LOCK_ROOT, f"{course_id}.lock")
-
-    lock = FileLock(lock_path, timeout=timeout)
-
-    try:
-        lock.acquire()
-        return lock
-    except Timeout:
-        raise IngestLocked(f"INGEST_IN_PROGRESS: {course_id}")
+    return os.path.join(LOCK_ROOT, f"{course_id}.lock")
 
 
 @contextmanager
-def ingest_lock(course_id: str = "global", timeout: int = 1):
+def ingest_lock(course_id: str, timeout: int = 10):
     """
-    Public ingest lock required by tests and chunking API.
+    Prevent concurrent ingest for the same course.
+    Must wrap the entire ingest + persist pipeline.
     """
-    lock = acquire_ingest_lock(course_id, timeout)
+    lock = FileLock(_lock_path(course_id))
+
+    try:
+        lock.acquire(timeout=timeout)
+    except Timeout:
+        raise IngestLocked(f"INGEST_IN_PROGRESS: {course_id}")
+
     try:
         yield
     finally:

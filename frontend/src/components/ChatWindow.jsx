@@ -14,7 +14,15 @@ export default function ChatWindow() {
         question,
         session_id: "default"
       });
-      setAnswer(res.data.data.answer);
+
+      if (res.data.success) {
+        setAnswer(res.data.data.answer);
+      } else {
+        setAnswer(res.data.error?.message || "No answer found.");
+      }
+
+    } catch (err) {
+      setAnswer("System error. Please try again.");
     } finally {
       setLoading(false);
     }

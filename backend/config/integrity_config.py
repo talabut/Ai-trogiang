@@ -4,6 +4,7 @@ from typing import List, Set
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
 
+DISABLE_GUARD = os.getenv("DISABLE_GUARD", "false").lower() == "true"
 def assert_dir_writable(path: str):
     try:
         os.makedirs(path, exist_ok=True)

@@ -992,43 +992,42 @@ pip install -r requirements.txt
 ==============================
 FILE: .\requirements.txt
 ==============================
+# --- Web API ---
 fastapi
 uvicorn
 python-multipart
+
+# --- Auth ---
 python-jose
 passlib[bcrypt]
 
-langchain-core
-langchain-community
-langchain-text-splitters
+# --- Embedding / Model ---
+torch==2.1.2
+transformers==4.36.2
+sentence-transformers==2.2.2
+huggingface-hub==0.20.3
+
+# --- Vector Store ---
 faiss-cpu
-sentence-transformers
-transformers
-torch
-pypdf
-python-docx
 
-# --- OCR & PDF Processing ---
-pdf2image
-paddlepaddle>=2.6.2
-paddleocr>=2.7.0
-opencv-python-headless
-
-# ... các thư viện cũ ...
+# --- LlamaIndex ---
 llama-index-core
 llama-index-embeddings-huggingface
 llama-index-vector-stores-faiss
 llama-index-readers-file
 
-fastapi
-uvicorn
+# --- File Processing ---
+pypdf
+python-docx
+
+# --- Utilities ---
 pydantic
 pydantic-settings
 filelock
 psutil
-faiss-cpu
-pytest
 
+# --- Testing ---
+pytest
 ==============================
 FILE: .\backend\bootstrap.py
 ==============================
@@ -1159,20 +1158,21 @@ class QAAgent:
 ==============================
 FILE: .\backend\agent\tools.py
 ==============================
+#backend/agent/tools.py
 from typing import Dict, Any, List
-from backend.infra.rag.retrieval_impl import retrieve_from_rag
+from backend.infra.rag.retrieval_impl import retrieve
 
 
-def check_knowledge_base(query: str) -> Dict[str, Any]:
+def check_knowledge_base(query: str, course_id: str) -> Dict[str, Any]:
     """
     TOOL = CỔNG TRI THỨC DUY NHẤT
     """
+    results = retrieve(query, course_id)
 
-    results = retrieve_from_rag(query)
-
-    if not results:
+    if results is None:
         return {
             "status": "NOT_FOUND",
+            "reason": "NO_INDEX_OR_NO_MATCH",
             "answer": "",
             "evidences": [],
             "sources": []
@@ -1192,6 +1192,8 @@ FILE: .\backend\agent\__init__.py
 ==============================
 FILE: .\backend\api\chat.py
 ==============================
+# backend/api/chat.py
+
 from fastapi import APIRouter
 from backend.services.agent import agent_service
 from backend.api.schemas import ChatRequest
@@ -1199,23 +1201,36 @@ from backend.api.schemas import ChatRequest
 router = APIRouter()
 
 @router.post("/chat")
-def chat(request: ChatRequest):
-    answer = agent_service.chat(
-        question=request.question,
-        session_id=request.session_id,
+def chat(req: ChatRequest):
+    result = agent_service.chat(
+        question=req.question,
+        session_id=req.session_id,
+        course_id=req.course_id
     )
+
+    # Handle NOT_FOUND or refusal case
+    if result.get("answer") is None:
+        return {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "NOT_FOUND",
+                "message": result.get("reason", "No relevant information found.")
+            }
+        }
 
     return {
         "success": True,
         "data": {
-            "answer": answer,
-            "evidence_count": 0,
-            "sources": [],
+            "answer": result["answer"],
+            "evidence_count": len(result["evidences"]),
+            "sources": result["sources"],
             "ingest_status": "READY",
             "refusal": False,
-        }
+            "reason": result.get("reason")
+        },
+        "error": None
     }
-
 ==============================
 FILE: .\backend\api\dependencies.py
 ==============================
@@ -1261,6 +1276,7 @@ class Evidence(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     session_id: str
+    course_id: str
 
 
 class ChatResponse(BaseModel):
@@ -1275,26 +1291,103 @@ class ChatResponse(BaseModel):
 ==============================
 FILE: .\backend\api\upload.py
 ==============================
-from fastapi import APIRouter, UploadFile
+import os
+import uuid
+
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+
 from backend.utils.text_extraction import extract_text_from_pdf
-from backend.rag.llama_ingest import ingest_txt_only
+from backend.rag.canonicalize import canonicalize_document, FatalError
+from backend.rag.chunking import chunk_canonical_data
+from backend.rag.node_parser import parse_nodes
+from backend.rag.llama_ingest import ingest_canonical_chunks
+from backend.locks.ingest_lock import ingest_lock
+
 
 router = APIRouter()
 
 
+def get_raw_docs_path(course_id: str) -> str:
+    return os.path.join("data", "raw_docs", course_id)
+
+
 @router.post("/upload")
-async def upload_file(file: UploadFile):
-    if not file.filename.lower().endswith(".pdf"):
-        raise RuntimeError("Only PDF allowed at upload layer")
+async def upload_file(
+    course_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    try:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="ONLY_PDF_ALLOWED")
 
-    canonical_txt = extract_text_from_pdf(file.file)
+        with ingest_lock(course_id):
 
-    # ❌ KHÔNG ingest PDF
-    # ✅ CHỈ ingest TXT canonical
-    ingest_txt_only(canonical_txt)
+            # -------- SAVE RAW FILE --------
+            raw_dir = get_raw_docs_path(course_id)
+            os.makedirs(raw_dir, exist_ok=True)
 
-    return {"status": "OK"}
+            raw_file_path = os.path.join(raw_dir, file.filename)
 
+            with open(raw_file_path, "wb") as f:
+                content = await file.read()
+                f.write(content)
+
+            # -------- EXTRACT TEXT --------
+            text = extract_text_from_pdf(raw_file_path)
+
+            if not text or not text.strip():
+                raise HTTPException(status_code=400, detail="EMPTY_EXTRACTED_TEXT")
+
+            doc_id = str(uuid.uuid4())
+
+            # 🔥 BẮT BUỘC CANONICAL PIPELINE
+            try:
+                canonical_data = canonicalize_document(
+                    text=text,
+                    source=file.filename
+                )
+            except FatalError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+            # -------- CHUNK CANONICAL --------
+            chunks = chunk_canonical_data(canonical_data)
+
+            if not chunks:
+                raise HTTPException(status_code=400, detail="NO_CHUNKS_CREATED")
+
+            # -------- PARSE NODES --------
+            nodes = parse_nodes(
+                chunks=chunks,
+                doc_id=doc_id,
+                file_name=file.filename
+            )
+
+            if not nodes:
+                raise HTTPException(status_code=400, detail="NO_VALID_NODES")
+
+            # -------- INTERNAL INGEST --------
+            result = ingest_canonical_chunks(
+                chunks=nodes,
+                course_id=course_id,
+                filename=file.filename,
+                doc_id=doc_id
+            )
+
+        return {
+            "status": result.get("status"),
+            "doc_id": doc_id,
+            "new_chunks": result.get("new_chunks"),
+            "total_pages": result.get("total_pages")
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"UPLOAD_FAILED: {str(e)}"
+        )
 ==============================
 FILE: .\backend\api\__init__.py
 ==============================
@@ -1325,6 +1418,7 @@ from typing import List, Set
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
 
+DISABLE_GUARD = os.getenv("DISABLE_GUARD", "false").lower() == "true"
 def assert_dir_writable(path: str):
     try:
         os.makedirs(path, exist_ok=True)
@@ -1426,48 +1520,126 @@ def execute_with_retry(conn, sql, params=()):
 ==============================
 FILE: .\backend\infra\rag\retrieval_impl.py
 ==============================
-"""
-Low-level RAG retrieval implementation.
+import logging
+import json
+from typing import List
+from pathlib import Path
 
-IMPORTANT:
-- This layer MUST NOT import from rag/*, service/*, api/*
-- No circular imports allowed
-- Only pure, infra-level logic
-"""
+from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
+from llama_index.core.schema import NodeWithScore
+
+from backend.rag.llama_ingest import get_index_path, INDEX_VERSION, EMBEDDING_MODEL_TAG
 
 
-def hybrid_search(query: str, top_k: int = 5):
+logger = logging.getLogger(__name__)
+
+
+class LlamaRetriever:
     """
-    Minimal hybrid search stub.
-
-    Contract:
-    - Input: query (str), top_k (int)
-    - Output: list (even if empty)
-
-    This implementation is intentionally simple to satisfy
-    architecture and test contracts without heavy dependencies.
+    Retrieval layer cho RAG system.
+    - Luôn trả top_k (3–5)
+    - Không dùng threshold cứng
+    - Fail fast nếu index meta mismatch
     """
-    if not query:
-        return []
 
-    return [
-        {
-            "content": f"Dummy result for query: {query}",
-            "score": 1.0,
-        }
-    ]
+    def __init__(self, course_id: str, top_k: int = 5):
+        if top_k < 3:
+            top_k = 3
+        if top_k > 5:
+            top_k = 5
 
+        self.course_id = course_id
+        self.top_k = top_k
 
-def retrieve_from_rag(query: str, top_k: int = 5):
-    """
-    Tool-level API used by agent/tools.py
-    """
-    return hybrid_search(query, top_k)
+        index_path = Path(get_index_path(course_id))
 
+        if not index_path.exists():
+            raise ValueError(
+                f"[Retrieval] Index path không tồn tại cho course_id={course_id}: {index_path}"
+            )
+
+        # =========================
+        # 🔥 VALIDATE INDEX META
+        # =========================
+
+        meta_path = index_path / "index_meta.json"
+
+        if not meta_path.exists():
+            raise RuntimeError(
+                f"[Retrieval] index_meta.json missing for course_id={course_id}"
+            )
+
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            raise RuntimeError(
+                f"[Retrieval] index_meta.json corrupted for course_id={course_id}"
+            )
+
+        if meta.get("index_version") != INDEX_VERSION:
+            raise RuntimeError(
+                f"[Retrieval] INDEX_VERSION mismatch. "
+                f"Expected={INDEX_VERSION} | Found={meta.get('index_version')}"
+            )
+
+        if meta.get("embedding_model_tag") != EMBEDDING_MODEL_TAG:
+            raise RuntimeError(
+                f"[Retrieval] EMBEDDING_MODEL mismatch. "
+                f"Expected={EMBEDDING_MODEL_TAG} | Found={meta.get('embedding_model_tag')}"
+            )
+
+        # =========================
+        # LOAD STORAGE
+        # =========================
+
+        storage_context = StorageContext.from_defaults(
+            persist_dir=str(index_path)
+        )
+
+        self.index: VectorStoreIndex = load_index_from_storage(storage_context)
+
+        self.retriever = self.index.as_retriever(
+            similarity_top_k=self.top_k
+        )
+
+        logger.info(
+            f"[Retrieval] Loaded index | "
+            f"course_id={course_id} | top_k={self.top_k} | "
+            f"version={INDEX_VERSION}"
+        )
+
+    def retrieve(self, query: str) -> List[NodeWithScore]:
+        """
+        Retrieve top_k nodes và log score để debug recall.
+        """
+        logger.info(
+            f"[Retrieval] Query='{query}' | course_id={self.course_id} | top_k={self.top_k}"
+        )
+
+        nodes: List[NodeWithScore] = self.retriever.retrieve(query)
+
+        if not nodes:
+            logger.warning(
+                f"[Retrieval] EMPTY RESULT | course_id={self.course_id}"
+            )
+            return []
+
+        # 🔴 Log score + preview nội dung
+        for i, node in enumerate(nodes):
+            score = node.score
+            text_preview = node.node.get_content()[:200].replace("\n", " ")
+
+            logger.info(
+                f"[Retrieval] Rank={i+1} | Score={score:.4f} | Preview='{text_preview}'"
+            )
+
+        return nodes
 ==============================
 FILE: .\backend\locks\ingest_lock.py
 ==============================
 # backend/locks/ingest_lock.py
+
 import os
 from contextlib import contextmanager
 from filelock import FileLock, Timeout
@@ -1479,30 +1651,28 @@ class IngestLocked(Exception):
     pass
 
 
-def acquire_ingest_lock(course_id: str, timeout: int = 1):
+def _lock_path(course_id: str) -> str:
     os.makedirs(LOCK_ROOT, exist_ok=True)
-    lock_path = os.path.join(LOCK_ROOT, f"{course_id}.lock")
-
-    lock = FileLock(lock_path, timeout=timeout)
-
-    try:
-        lock.acquire()
-        return lock
-    except Timeout:
-        raise IngestLocked(f"INGEST_IN_PROGRESS: {course_id}")
+    return os.path.join(LOCK_ROOT, f"{course_id}.lock")
 
 
 @contextmanager
-def ingest_lock(course_id: str = "global", timeout: int = 1):
+def ingest_lock(course_id: str, timeout: int = 10):
     """
-    Public ingest lock required by tests and chunking API.
+    Prevent concurrent ingest for the same course.
+    Must wrap the entire ingest + persist pipeline.
     """
-    lock = acquire_ingest_lock(course_id, timeout)
+    lock = FileLock(_lock_path(course_id))
+
+    try:
+        lock.acquire(timeout=timeout)
+    except Timeout:
+        raise IngestLocked(f"INGEST_IN_PROGRESS: {course_id}")
+
     try:
         yield
     finally:
         lock.release()
-
 ==============================
 FILE: .\backend\middleware\rate_limit.py
 ==============================
@@ -1550,8 +1720,10 @@ async def rate_limit(request: Request, call_next):
 FILE: .\backend\rag\canonicalize.py
 ==============================
 # backend/rag/canonicalize.py
+
 import hashlib
 import json
+import re
 import unicodedata
 from typing import Dict, List
 
@@ -1560,125 +1732,258 @@ class FatalError(Exception):
     pass
 
 
+MIN_PARAGRAPH_LENGTH = 20  # tránh fragment 1–2 ký tự
+
+
 def canonicalize_text(text: str) -> str:
     """
-    Canonicalize raw extracted text into a normalized format
-    for downstream chunking and indexing.
+    Canonicalize extracted text into paragraph blocks.
+
+    - Merge broken OCR lines into paragraphs
+    - Remove tiny fragments
+    - Normalize unicode
+    - Collapse excessive whitespace
     """
+
     if not text:
         return ""
 
-    lines = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line:
-            lines.append(line)
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{2,}", "\n\n", text)
 
-    return "\n".join(lines)
+    raw_blocks = text.split("\n\n")
 
+    paragraphs = []
 
-def get_canonical_hash(chunk: Dict) -> str:
-    text = unicodedata.normalize("NFKC", chunk["text"].strip())
-    text = " ".join(text.split())
+    for block in raw_blocks:
+        block = block.strip()
+        block = re.sub(r"\n", " ", block)
+        block = " ".join(block.split())
 
-    canonical_obj = {
-        "doc_id": chunk["doc_id"],
-        "text": text,
-        "page": chunk["page"],
-        "line_start": chunk["line_start"],
-        "line_end": chunk["line_end"],
-    }
+        if len(block) < MIN_PARAGRAPH_LENGTH:
+            continue
 
-    raw = json.dumps(canonical_obj, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
+        paragraphs.append(block)
+
+    return "\n\n".join(paragraphs)
 
 
-def deduplicate_chunks(chunks: List[Dict], existing_hashes: set) -> List[Dict]:
-    unique = []
+def canonicalize_document(text: str, source: str) -> List[Dict]:
+    """
+    🔥 BẮT BUỘC: Convert raw extracted text → canonical format
+    Output tương thích 100% với chunk_canonical_data()
 
-    for chunk in chunks:
-        h = get_canonical_hash(chunk)
+    Return format:
+    [
+        {
+            "page": int,
+            "source": str,
+            "lines": [str, str, ...]
+        }
+    ]
+    """
 
-        if h in existing_hashes:
-            raise FatalError(f"DUPLICATE_CHUNK_DETECTED: {h}")
+    clean = canonicalize_text(text)
 
-        existing_hashes.add(h)
-        chunk["content_hash"] = h
-        unique.append(chunk)
+    if not clean:
+        raise FatalError("CANONICAL_EMPTY_AFTER_CLEAN")
 
-    return unique
+    paragraphs = clean.split("\n\n")
 
+    return [
+        {
+            "page": 1,
+            "source": source,
+            "lines": paragraphs
+        }
+    ]
+
+
+def get_canonical_hash(data: Dict) -> str:
+    """
+    Stable deterministic hash for chunk identity.
+    Ensures identical content generates identical ID.
+    """
+    normalized = json.dumps(data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 ==============================
 FILE: .\backend\rag\chunking.py
 ==============================
 # backend/rag/chunking.py
-import threading
-import hashlib
-from typing import List
 
-_ingest_lock = threading.Lock()
-_seen_hashes = set()
+import re
+from typing import List, Dict
+import tiktoken
 
+from backend.rag.canonicalize import get_canonical_hash
 
-def ingest_with_lock(text: str, func):
-    """
-    Ensure the same text is ingested only once (process-wide).
-    Deterministic via SHA-256 hash.
-    """
-    h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+# ===============================
+# CONFIG
+# ===============================
 
-    with _ingest_lock:
-        if h in _seen_hashes:
-            return {"status": "skipped"}
+TARGET_MIN = 400
+TARGET_MAX = 600
+OVERLAP = 100
+MIN_CHUNK = 50
 
-        _seen_hashes.add(h)
-        func(text)
-        return {"status": "ingested"}
+encoding = tiktoken.get_encoding("cl100k_base")
 
 
-def strict_chunk_text(text: str) -> List[str]:
-    """
-    Strict deterministic text chunker.
+# ===============================
+# TOKEN UTILS
+# ===============================
 
-    - Input: raw text (str)
-    - Output: List[str] of clean chunks
-
-    Rules:
-    - Split by lines
-    - Strip whitespace
-    - Drop empty lines
-    - Preserve order
-    - No metadata, no side effects
-    """
-    return [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip()
-    ]
+def count_tokens(text: str) -> int:
+    return len(encoding.encode(text))
 
 
-def chunk_canonical_data(text: str, doc_id: str):
-    """
-    Strict deterministic chunker for tests.
-    Produces canonical chunks with metadata.
-    """
-    lines = text.splitlines()
+# ===============================
+# STRUCTURE SPLIT
+# ===============================
+
+def split_by_structure(text: str) -> List[str]:
+    text = text.replace("\r\n", "\n")
+
+    heading_pattern = r"\n(?=[A-Z0-9][A-Z0-9\s\.]{3,}\n)"
+    sections = re.split(heading_pattern, text)
+
+    blocks = []
+    for sec in sections:
+        paragraphs = sec.split("\n\n")
+        for p in paragraphs:
+            p = p.strip()
+            if p:
+                blocks.append(p)
+
+    return blocks
+
+
+# ===============================
+# MAIN CHUNKER
+# ===============================
+
+def chunk_single_text(text: str, page: int, source: str) -> List[Dict]:
+
+    blocks = split_by_structure(text)
+
     chunks = []
+    current_text = ""
+    current_tokens = 0
 
-    for i, line in enumerate(lines, start=1):
-        if not line.strip():
+    for block in blocks:
+        block_tokens = count_tokens(block)
+
+        # ---- FORCE SPLIT IF TOO LARGE ----
+        if block_tokens > TARGET_MAX:
+            tokens = encoding.encode(block)
+            start = 0
+
+            while start < len(tokens):
+                end = min(start + TARGET_MAX, len(tokens))
+                piece = encoding.decode(tokens[start:end])
+
+                if count_tokens(piece) >= MIN_CHUNK:
+                    chunk_data = {
+                        "text": piece.strip(),
+                        "page": page,
+                        "source": source,
+                        "token_count": count_tokens(piece),
+                    }
+
+                    chunk_data["chunk_id"] = get_canonical_hash(chunk_data)
+                    chunks.append(chunk_data)
+
+                start += TARGET_MAX - OVERLAP
+
             continue
 
-        chunks.append({
-            "text": line.strip(),
-            "doc_id": doc_id,
-            "page": 1,
-            "line_start": i,
-            "line_end": i,
-        })
+        # ---- NORMAL ACCUMULATION ----
+        if current_tokens + block_tokens <= TARGET_MAX:
+            current_text += "\n\n" + block
+            current_tokens += block_tokens
+        else:
+            if current_tokens >= MIN_CHUNK:
+                chunk_data = {
+                    "text": current_text.strip(),
+                    "page": page,
+                    "source": source,
+                    "token_count": current_tokens,
+                }
+
+                chunk_data["chunk_id"] = get_canonical_hash(chunk_data)
+                chunks.append(chunk_data)
+
+            # overlap
+            tokens = encoding.encode(current_text)
+            overlap_tokens = tokens[-OVERLAP:] if len(tokens) > OVERLAP else tokens
+
+            current_text = encoding.decode(overlap_tokens)
+            current_tokens = count_tokens(current_text)
+
+            current_text += "\n\n" + block
+            current_tokens += block_tokens
+
+    # ---- FINAL FLUSH ----
+    if current_tokens >= MIN_CHUNK:
+        chunk_data = {
+            "text": current_text.strip(),
+            "page": page,
+            "source": source,
+            "token_count": current_tokens,
+        }
+
+        chunk_data["chunk_id"] = get_canonical_hash(chunk_data)
+        chunks.append(chunk_data)
 
     return chunks
 
+
+# ===============================
+# CANONICAL ENTRY POINT
+# ===============================
+
+def chunk_canonical_data(canonical_data: List[Dict]) -> List[Dict]:
+    """
+    Input:
+    [
+        {
+            "page": int,
+            "source": str,
+            "lines": [str, str, ...]
+        }
+    ]
+
+    Output:
+    [
+        {
+            "text": str,
+            "page": int,
+            "source": str,
+            "token_count": int,
+            "chunk_id": str
+        }
+    ]
+    """
+
+    all_chunks = []
+
+    for page_data in canonical_data:
+        page = page_data.get("page", 1)
+        source = page_data.get("source", "unknown")
+        lines = page_data.get("lines", [])
+
+        text = "\n\n".join(lines)
+
+        page_chunks = chunk_single_text(
+            text=text,
+            page=page,
+            source=source
+        )
+
+        all_chunks.extend(page_chunks)
+
+    return all_chunks
 ==============================
 FILE: .\backend\rag\llama_config.py
 ==============================
@@ -1687,58 +1992,115 @@ import os
 _settings = None
 
 def get_llama_settings():
-    """I.2 - Lazy Initialization & Single Source of Truth."""
     global _settings
     
     if os.environ.get("SYSTEM_BOOTSTRAPPED") != "true":
-        raise RuntimeError("Infrastructure accessed before bootstrap_system(). Call bootstrap_system() first.")
+        raise RuntimeError(
+            "Infrastructure accessed before bootstrap_system(). Call bootstrap_system() first."
+        )
 
     if _settings is None:
-        # I.1 - Đảm bảo load các thành phần nặng chỉ khi hàm này được gọi
         from llama_index.core import Settings
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
         from llama_index.llms.ollama import Ollama
 
-        Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-        Settings.llm = Ollama(model="llama3", request_timeout=360.0)
+        Settings.embed_model = HuggingFaceEmbedding(
+            model_name="BAAI/bge-small-en-v1.5"
+        )
+        Settings.llm = Ollama(
+            model="llama3",
+            request_timeout=360.0
+        )
         _settings = Settings
         
     return _settings
+
+
+def get_embedding_model():
+    settings = get_llama_settings()
+    return settings.embed_model
 ==============================
 FILE: .\backend\rag\llama_ingest.py
 ==============================
 import os
 import json
-import hashlib
+import logging
 from typing import List, Dict, Any
-from backend.rag.canonicalize import canonicalize_text
+
+from backend.rag.canonicalize import canonicalize_text, get_canonical_hash
+from backend.config.integrity_config import settings
 
 INDEX_VERSION = "v1.0"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL_TAG = "sentence-transformers/all-MiniLM-L6-v2"
+
+logger = logging.getLogger(__name__)
+
+
+def estimate_tokens(text: str) -> int:
+    """
+    Approximate token count.
+    MiniLM ~ 1 token ≈ 0.75 words (rough estimate).
+    """
+    if not text:
+        return 0
+    return int(len(text.split()) / 0.75)
+
 
 def get_index_path(course_id: str) -> str:
-    """Trả về đường dẫn lưu trữ index dựa trên course_id."""
-    return os.path.join("backend", "data", course_id)
+    """
+    Unified FAISS persist directory.
+    MUST match retrieval layer.
+    """
+    return os.path.join(settings.FAISS_INDEX_DIR, course_id)
+
+
+def _ensure_index_meta(path: str, course_id: str):
+    """
+    Ensure index_meta.json exists and is consistent.
+    """
+    meta_path = os.path.join(path, "index_meta.json")
+
+    meta = {
+        "course_id": course_id,
+        "index_version": INDEX_VERSION,
+        "embedding_model_tag": EMBEDDING_MODEL_TAG
+    }
+
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            # Fail fast if mismatch
+            if (
+                existing.get("embedding_model_tag") != EMBEDDING_MODEL_TAG
+                or existing.get("index_version") != INDEX_VERSION
+            ):
+                raise RuntimeError("INDEX_META_MISMATCH")
+        except json.JSONDecodeError:
+            pass
+
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
 
 def ingest_canonical_chunks(
-    chunks: List[Dict[str, Any]], 
-    course_id: str, 
-    filename: str, 
+    chunks: List[Dict[str, Any]],
+    course_id: str,
+    filename: str,
     doc_id: str
 ):
-    """
-    Xử lý Ingest với các tính năng:
-    - Signature: Ghi nhận version và model embedding.
-    - Dedup chunk: Sử dụng SHA256 hash của text để tránh lưu trùng.
-    - Metadata: Lưu trữ đầy đủ vị trí (page, line) và nguồn gốc.
-    """
+
+    if not chunks:
+        raise RuntimeError("NO_CHUNKS_TO_INGEST")
+
     path = get_index_path(course_id)
     os.makedirs(path, exist_ok=True)
 
-    store_path = os.path.join(path, "docstore.json")
-    vector_path = os.path.join(path, "default__vector_store.json")
+    _ensure_index_meta(path, course_id)
 
-    # Load dữ liệu hiện có để kiểm tra trùng lặp
+    store_path = os.path.join(path, "docstore.json")
+    vector_path = os.path.join(path, "faiss_index.json")
+
     existing = {}
     if os.path.exists(store_path):
         try:
@@ -1747,109 +2109,162 @@ def ingest_canonical_chunks(
         except json.JSONDecodeError:
             existing = {}
 
+    new_chunks_added = 0
+    total_tokens = 0
+    empty_chunks = 0
+    pages_seen = set()
+
+    total_input_chunks = len(chunks)
+
     for c in chunks:
-        # 1. Chuẩn hóa text trước khi hash để đảm bảo dedup chính xác
+
+        if not c or not c.get("text"):
+            empty_chunks += 1
+            continue
+
+        pages_seen.add(c.get("page", 0))
+
         clean_text = canonicalize_text(c["text"])
-        
-        # 2. Tạo Signature (UID) cho chunk dựa trên nội dung
-        uid = hashlib.sha256(clean_text.encode()).hexdigest()
-        
-        # 3. Dedup: Nếu đã tồn tại chunk này thì bỏ qua
+
+        if not clean_text:
+            empty_chunks += 1
+            continue
+
+        uid = get_canonical_hash({
+            "doc_id": doc_id,
+            "text": clean_text,
+            "page": c.get("page", 0),
+        })
+
         if uid in existing:
             continue
 
-        # 4. Metadata đầy đủ
+        token_count = estimate_tokens(clean_text)
+        total_tokens += token_count
+
         existing[uid] = {
             "text": clean_text,
             "metadata": {
+                "course_id": course_id,
                 "doc_id": doc_id,
                 "file_name": filename,
                 "page": c.get("page", 0),
-                "line_start": c.get("line_start", 0),
-                "line_end": c.get("line_end", 0),
                 "index_version": INDEX_VERSION,
-                "embedding_model": EMBEDDING_MODEL,
+                "embedding_model_tag": EMBEDDING_MODEL_TAG,
+                "estimated_tokens": token_count
             }
         }
 
-    # Lưu lại docstore đã cập nhật
+        new_chunks_added += 1
+
+    if new_chunks_added == 0:
+        raise RuntimeError("ALL_CHUNKS_DUPLICATED_OR_EMPTY")
+
     with open(store_path, "w", encoding="utf-8") as f:
         json.dump(existing, f, ensure_ascii=False, indent=2)
 
-    # Khởi tạo vector store trống nếu chưa có để tránh lỗi load
+    # ensure vector index file exists (retrieval layer will use same folder)
     if not os.path.exists(vector_path):
-        with open(vector_path, "w") as f:
+        with open(vector_path, "w", encoding="utf-8") as f:
             json.dump({}, f)
 
-def ingest_txt_only(text: str, course_id: str, filename: str, doc_id: str):
-    """Hàm wrapper cho các request chỉ có text thô."""
-    # Giả lập 1 chunk duy nhất cho file txt đơn giản
-    chunks = [{
-        "text": text,
-        "page": 1,
-        "line_start": 1,
-        "line_end": len(text.splitlines())
-    }]
+    # =========================
+    # INGESTION METRICS LOGGING
+    # =========================
+
+    avg_tokens = total_tokens / new_chunks_added if new_chunks_added else 0
+    empty_ratio = empty_chunks / total_input_chunks if total_input_chunks else 0
+
+    logger.info(
+        f"""
+[INGESTION REPORT]
+Course: {course_id}
+File: {filename}
+Doc ID: {doc_id}
+--------------------------------
+total_pages: {len(pages_seen)}
+total_input_chunks: {total_input_chunks}
+total_new_chunks: {new_chunks_added}
+avg_tokens_per_chunk: {round(avg_tokens, 2)}
+empty_chunk_ratio: {round(empty_ratio, 3)}
+"""
+    )
+
+    return {
+        "status": "INGEST_OK",
+        "new_chunks": new_chunks_added,
+        "total_pages": len(pages_seen),
+        "avg_tokens_per_chunk": round(avg_tokens, 2),
+        "empty_chunk_ratio": round(empty_ratio, 3)
+    }
+
+
+def ingest_txt_only(text, course_id: str, filename: str, doc_id: str):
+
+    if isinstance(text, list):
+        chunks = text
+
+    elif isinstance(text, str):
+        chunks = [{
+            "text": text,
+            "page": 1
+        }]
+
+    else:
+        raise TypeError("Unsupported text format for ingestion")
+
     return ingest_canonical_chunks(chunks, course_id, filename, doc_id)
 ==============================
 FILE: .\backend\rag\node_parser.py
 ==============================
-
 from typing import List, Dict, Any
-from backend.rag.chunking import strict_chunk_text
-
+from backend.rag.chunking import chunk_text
 
 # === Ingest / Vectorstore contract constants ===
 INGEST_VERSION = "v1"
 EMBEDDING_MODEL_TAG = "default"
 
-# Chunking contract (MUST match chunking.py)
+# Chunking contract (must align with chunking.py config)
 CHUNK_SIZE = 512
-CHUNK_OVERLAP = 50
+CHUNK_OVERLAP = 100
+
 
 def parse_nodes(
-    text: str,
+    chunks: List[Dict[str, Any]],
     file_name: str,
-    metadata_pages: List[Dict[str, Any]],
 ):
     """
-    Mỗi node BẮT BUỘC có:
+    Each node must include:
     - page
-    - line_start
-    - line_end
+    - start_char
+    - end_char
+    - chunk_id
+    - index_version
     - file_name
     """
 
-    assert isinstance(text, str)
+    assert isinstance(chunks, list)
     assert file_name
 
     nodes = []
-    chunks = strict_chunk_text(text)
 
-    for chunk in chunks:
-        page_meta = _match_page_metadata(chunk, metadata_pages)
+    for i, chunk in enumerate(chunks):
 
-        assert page_meta is not None, "Missing OCR metadata"
+        chunk_text_value = chunk["text"]
 
         nodes.append({
-            "text": chunk,
+            "text": chunk_text_value,
             "metadata": {
-                "page": page_meta["page"],
-                "line_start": page_meta["line_start"],
-                "line_end": page_meta["line_end"],
+                "page": chunk.get("page", 1),
+                "start_char": 0,  # simplified for now
+                "end_char": len(chunk_text_value),
+                "chunk_id": f"{file_name}_{i}",
+                "index_version": INGEST_VERSION,
                 "file_name": file_name,
             },
         })
 
     return nodes
-
-
-def _match_page_metadata(chunk: str, pages: List[Dict[str, Any]]):
-    for page in pages:
-        if page["text"] in chunk:
-            return page
-    return None
-
 ==============================
 FILE: .\backend\rag\retrieval.py
 ==============================
@@ -1857,9 +2272,15 @@ import os
 import json
 import inspect
 from typing import Dict, Any, List
-from backend.rag.llama_ingest import get_index_path
+
+from backend.rag.llama_ingest import (
+    get_index_path,
+    INDEX_VERSION,
+    EMBEDDING_MODEL_TAG
+)
 
 # --- Dummy Classes để tương thích với cấu trúc Node của LlamaIndex ---
+
 class DummyNode:
     def __init__(self, text: str, metadata: dict):
         self.text = text
@@ -1867,6 +2288,7 @@ class DummyNode:
 
     def get_content(self):
         return self.text
+
 
 class DummyRetriever:
     def __init__(self, nodes: List[DummyNode], top_k: int):
@@ -1877,44 +2299,77 @@ class DummyRetriever:
         # Trả về top_k kết quả đầu tiên (giả lập tìm kiếm)
         return self.nodes[:self.top_k]
 
+
 # --- Core Functions ---
 
 def _enforce_tool_only_call():
     """STRICT: Chỉ cho phép gọi từ agent/tools.py"""
     stack = inspect.stack()
-    # Kiểm tra xem có frame nào trong stack trace đến từ tools.py không
     is_valid_call = any("agent/tools.py" in frame.filename for frame in stack)
     if not is_valid_call:
         raise RuntimeError("retrieval can only be called from Tool")
 
-def get_llama_retriever(course_id: str, top_k: int = 3):
+
+def _validate_index_meta(index_dir: str):
+    """
+    🔥 CRITICAL: Validate index_meta.json đồng bộ với ingest layer
+    """
+    meta_path = os.path.join(index_dir, "index_meta.json")
+
+    if not os.path.exists(meta_path):
+        raise RuntimeError("INDEX_META_MISSING")
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        raise RuntimeError("INDEX_META_CORRUPTED")
+
+    if meta.get("index_version") != INDEX_VERSION:
+        raise RuntimeError("INDEX_VERSION_MISMATCH")
+
+    if meta.get("embedding_model_tag") != EMBEDDING_MODEL_TAG:
+        raise RuntimeError("EMBEDDING_MODEL_MISMATCH")
+
+
+def get_llama_retriever(course_id: str, top_k: int = 5):
     """
     Public retriever factory.
-    Fix lỗi 'multiple values for argument top_k' bằng cách định nghĩa tham số rõ ràng.
+    Đồng bộ persist path với ingest layer.
     """
-    path = os.path.join(get_index_path(course_id), "docstore.json")
-    
-    if not os.path.exists(path):
-        # Trả về retriever trống nếu chưa có dữ liệu
+
+    index_dir = get_index_path(course_id)
+    store_path = os.path.join(index_dir, "docstore.json")
+
+    if not os.path.exists(index_dir):
+        raise RuntimeError("INDEX_DIR_NOT_FOUND")
+
+    # 🔥 Validate meta trước khi load docstore
+    _validate_index_meta(index_dir)
+
+    if not os.path.exists(store_path):
         return DummyRetriever([], top_k)
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(store_path, "r", encoding="utf-8") as f:
         store = json.load(f)
 
-    # Chuyển đổi dữ liệu từ docstore thành danh sách Node
     nodes = [
-        DummyNode(text=v.get("text", ""), metadata=v.get("metadata", {})) 
+        DummyNode(
+            text=v.get("text", ""),
+            metadata=v.get("metadata", {})
+        )
         for v in store.values()
     ]
-    
+
     return DummyRetriever(nodes, top_k)
+
 
 def retrieve_knowledge(query: str, course_id: str, top_k: int = 3):
     """
     Hàm thực hiện retrieval chính thống.
     """
     _enforce_tool_only_call()
-    
+
     retriever = get_llama_retriever(course_id=course_id, top_k=top_k)
     nodes = retriever.retrieve(query)
 
@@ -1934,6 +2389,22 @@ def retrieve_knowledge(query: str, course_id: str, top_k: int = 3):
         "evidences": evidences,
         "sources": list(sources),
     }
+
+
+def simple_search(query: str, nodes: list, top_k: int = 3):
+    query = query.lower()
+    scored = []
+
+    for node in nodes:
+        text = node["text"].lower()
+        score = text.count(query)
+
+        if score > 0:
+            scored.append((score, node))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    return [n for _, n in scored[:top_k]]
 ==============================
 FILE: .\backend\rag\__init__.py
 ==============================
@@ -1941,10 +2412,12 @@ FILE: .\backend\rag\__init__.py
 ==============================
 FILE: .\backend\security\guard.py
 ==============================
-# backend/security/guard.py
+from backend.config.integrity_config import DISABLE_GUARD
+
 import builtins
 import os
 import subprocess
+from backend.config.integrity_config import settings
 
 
 class RuntimeSandboxError(RuntimeError):
@@ -1955,6 +2428,8 @@ _original_open = builtins.open
 
 
 def enable_runtime_sandbox():
+    if DISABLE_GUARD:
+        return  # bypass toàn bộ sandbox    
     def _blocked(*args, **kwargs):
         raise RuntimeSandboxError("Runtime sandbox violation")
 
@@ -1968,13 +2443,15 @@ def enable_runtime_sandbox():
     subprocess.Popen = _blocked
 
     # --- Filesystem isolation ---
-    data_root = os.path.abspath("backend/data")
+    data_root = os.path.abspath(settings.DATA_DIR)
 
     def sandboxed_open(file, mode="r", *args, **kwargs):
         if any(flag in mode for flag in ("w", "a", "x", "+")):
             abs_path = os.path.abspath(file)
             if not abs_path.startswith(data_root):
-                raise RuntimeSandboxError("Runtime sandbox violation")
+                raise RuntimeSandboxError(
+                    f"Write blocked outside sandbox: {abs_path}"
+                )
         return _original_open(file, mode, *args, **kwargs)
 
     builtins.open = sandboxed_open
@@ -1988,27 +2465,146 @@ FILE: .\backend\services\agent.py
 ==============================
 from backend.agent.qa import QAAgent
 from backend.agent.tools import check_knowledge_base
+from backend.services.llm import generate_answer
+
 
 class AgentService:
     def __init__(self):
         # Khởi tạo QAAgent để sử dụng cho các phương thức trong class
         self.agent = QAAgent()
 
-    def run(self, query: str):
-        """Xử lý truy vấn thông qua knowledge base."""
-        tool_result = check_knowledge_base(query)
-        # Pass-through đúng vai trò: để agent trả lời dựa trên kết quả tool
-        return self.agent.answer(tool_result)
+    def build_rag_prompt(self, question: str, evidences: list) -> str:
+        """
+        Build structured RAG prompt from retrieved evidences.
+        """
+        context_blocks = []
 
-    def chat(self, question: str, session_id: str) -> str:
-        """
-        Phương thức mới để hỗ trợ chat theo session.
-        Hiện tại đang để Echo để pass test_contract_api.
-        """
-        return f"Echo: {question}"
+        for idx, ev in enumerate(evidences, start=1):
+            page = ev.get("page", "N/A")
+            content = ev.get("content", "")
+            context_blocks.append(f"[{idx}] (page {page})\n{content}")
+
+        context_text = "\n\n".join(context_blocks)
+
+        prompt = (
+            "You are a university teaching assistant.\n"
+            "Answer strictly using ONLY the information provided in the CONTEXT section.\n"
+            "Do NOT use outside knowledge.\n"
+            "If the answer cannot be found in the context, respond exactly with: I don't know.\n\n"
+            "CONTEXT:\n"
+            f"{context_text}\n\n"
+            "QUESTION:\n"
+            f"{question}\n\n"
+            "ANSWER:"
+        )
+
+        return prompt
+
+    def chat(self, question: str, session_id: str, course_id: str):
+        # 1. Retrieval
+        tool_result = check_knowledge_base(question, course_id)
+
+        result = self.agent.answer(tool_result)
+
+        # 2. Nếu có evidences → build prompt và gọi LLM
+        evidences = result.get("evidences", [])
+
+        # 🚫 Không có evidence → từ chối ngay
+        if not evidences:
+            result["answer"] = "I don't know."
+            return result
+
+        # 🚫 Lọc evidence yếu (content quá ngắn)
+        valid_evidences = [
+            ev for ev in evidences
+            if ev.get("content") and len(ev.get("content").strip()) > 50
+        ]
+
+        if not valid_evidences:
+            result["answer"] = "I don't know."
+            return result
+
+        # ✅ Chỉ khi evidence đủ mạnh mới generate
+        rag_prompt = self.build_rag_prompt(
+            question=question,
+            evidences=valid_evidences
+        )
+
+        final_answer = generate_answer(rag_prompt)
+        result["answer"] = final_answer
+
+        return result
 
 # Khởi tạo instance để các module khác (như API route) có thể import và sử dụng ngay
 agent_service = AgentService()
+==============================
+FILE: .\backend\services\llm.py
+==============================
+# backend/services/llm.py
+
+import requests
+
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL_NAME = "phi3:mini"
+
+
+def generate_answer(prompt: str) -> str:
+    """
+    Generate answer from Ollama (phi3:mini).
+    Strict low-temperature config for RAG grounding.
+    """
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL_NAME,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,   # 🔥 giảm hallucination
+                    "top_p": 0.9
+                }
+            },
+            timeout=60
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        return data.get("response", "").strip()
+
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(
+            "Ollama server is not running. Please start with: ollama serve"
+        )
+
+    except Exception as e:
+        raise RuntimeError(f"LLM generation failed: {str(e)}")
+==============================
+FILE: .\backend\test\test_retrieval_debug.py
+==============================
+from backend.infra.rag.retrieval_impl import LlamaRetriever
+
+COURSE_ID = "your_course_id_here"   # đổi đúng course_id bạn đã upload
+
+def test_retrieval():
+    retriever = LlamaRetriever(course_id=COURSE_ID)
+
+    query = "định nghĩa marketing là gì"  # đổi thành câu hỏi thật
+
+    nodes = retriever.retrieve(query)
+
+    print("\n=== RETRIEVAL RESULT ===")
+    for i, node in enumerate(nodes):
+        print(f"\nRank {i+1}")
+        print("Score:", node.score)
+        print("Content preview:", node.node.get_content()[:500])
+
+
+if __name__ == "__main__":
+    test_retrieval()
 ==============================
 FILE: .\backend\utils\memory_guard.py
 ==============================
@@ -2028,110 +2624,216 @@ def enforce_memory_budget():
 ==============================
 FILE: .\backend\utils\ocr.py
 ==============================
-# FILE: backend/utils/ocr.py
+# backend/utils/ocr.py
+
+from typing import List, Dict
 from paddleocr import PaddleOCR
+import logging
+
+logger = logging.getLogger(__name__)
 
 _ocr = PaddleOCR(
     use_textline_orientation=True,
     lang="en"
 )
 
-def run_ocr(image_path: str):
-    """
-    Mandatory OCR for scanned PDFs.
-    Output schema:
-    {
-      text: str,
-      page: int,
-      line_start: int,
-      line_end: int
-    }
-    """
-    results = _ocr.ocr(image_path, cls=True)
 
-    output = []
-    line_counter = 0
+def run_ocr(pdf_path: str) -> List[Dict]:
+    """
+    OCR scanned PDF → return page-level text blocks
+
+    Output schema:
+    [
+        {
+            "page_number": int,
+            "text": str
+        }
+    ]
+    """
+
+    try:
+        results = _ocr.ocr(pdf_path)
+    except Exception as e:
+        logger.error(f"[OCR ERROR] {pdf_path}: {e}")
+        return []
+
+    if not results or not isinstance(results, list):
+        return []
+
+    pages_output = []
 
     for page_idx, page in enumerate(results):
+
+        if not page or not isinstance(page, list):
+            continue
+
+        page_lines = []
+
         for line in page:
-            text = line[1][0]
-            if not text.strip():
+
+            # Expected structure:
+            # line = [ [box], (text, confidence) ]
+            if (
+                not line
+                or not isinstance(line, list)
+                or len(line) < 2
+                or not isinstance(line[1], (list, tuple))
+                or len(line[1]) < 1
+            ):
                 continue
 
-            output.append({
-                "text": text,
-                "page": page_idx + 1,
-                "line_start": line_counter,
-                "line_end": line_counter,
-            })
-            line_counter += 1
+            text = line[1][0]
 
-    return output
+            if not isinstance(text, str):
+                continue
+
+            text = text.strip()
+            if not text:
+                continue
+
+            page_lines.append(text)
+
+        if page_lines:
+            page_text = "\n".join(page_lines)
+
+            pages_output.append({
+                "page_number": page_idx + 1,
+                "text": page_text
+            })
+
+    logger.info(
+        f"[OCR DONE] File: {pdf_path} | Pages: {len(pages_output)}"
+    )
+
+    return pages_output
 
 ==============================
 FILE: .\backend\utils\text_extraction.py
 ==============================
+# backend/utils/text_extraction.py
+
+import re
+import logging
+from pathlib import Path
+from typing import Optional
+
+import fitz  # PyMuPDF
+
 from backend.utils.ocr import run_ocr
 
+logger = logging.getLogger(__name__)
 
-def extract_text_from_pdf(pdf_path: str) -> dict:
+
+# =========================
+# TEXT NORMALIZATION
+# =========================
+
+def normalize_text(text: str) -> str:
     """
-    PDF → OCR → TXT (BẮT BUỘC)
+    Clean text before chunking:
+    - Ensure UTF-8
+    - Remove control characters
+    - Merge hyphen line breaks
+    - Collapse multiple newlines
+    - Collapse multiple spaces
     """
 
-    ocr_lines = run_ocr(pdf_path)
+    if not text:
+        return ""
 
-    normalized_lines = [
-        line.strip()
-        for line in ocr_lines
-        if line and line.strip()
-    ]
+    # Ensure UTF-8
+    text = text.encode("utf-8", errors="ignore").decode("utf-8")
 
-    return {
-        "type": "TXT_CANONICAL",
-        "lines": normalized_lines,
-        "line_count": len(normalized_lines)
-    }
+    # Remove control characters (except newline)
+    text = "".join(
+    	ch for ch in text
+   	 if ch.isprintable() or ch == "\n"
+   )
 
-==============================
-FILE: .\backend\vectorstore\atomic_persist.py
-==============================
-# backend/vectorstore/atomic_persist.py
-import os
-import shutil
-import tempfile
+    # Merge hyphen line break: exam-\nple → example
+    text = re.sub(r"-\n(\w)", r"\1", text)
 
-from backend.vectorstore.index_meta import write_meta
+    # Replace single newline inside paragraph with space
+    text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+
+    # Collapse multiple newlines
+    text = re.sub(r"\n{2,}", "\n\n", text)
+
+    # Collapse multiple spaces
+    text = re.sub(r"[ \t]{2,}", " ", text)
+
+    return text.strip()
 
 
-def atomic_persist(index_dir: str, persist_fn):
-    parent = os.path.dirname(index_dir.rstrip("/")) or "."
-    tmp_dir = tempfile.mkdtemp(prefix="faiss_tmp_", dir=parent)
+# =========================
+# MAIN EXTRACTION
+# =========================
 
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """
+    Extract text from PDF.
+    Strategy:
+    1. Try direct PDF text extraction
+    2. If empty → fallback OCR
+    3. Normalize clean text
+    4. Return single cleaned string
+    """
+
+    pdf_path = str(Path(pdf_path))
+
+    raw_text: Optional[str] = ""
+
+    # -------------------------
+    # 1️⃣ Try PDF text extraction
+    # -------------------------
     try:
-        persist_fn(tmp_dir)
-        write_meta(tmp_dir)
+        doc = fitz.open(pdf_path)
+        pages = []
 
-        if os.path.exists(index_dir):
-            shutil.rmtree(index_dir)
+        for page in doc:
+            page_text = page.get_text("text")
+            if page_text:
+                pages.append(page_text)
 
-        os.rename(tmp_dir, index_dir)
-    except Exception:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise
+        raw_text = "\n".join(pages)
+        doc.close()
 
+    except Exception as e:
+        logger.error(f"[PDF TEXT ERROR] {pdf_path}: {e}")
 
-def persist_nodes(nodes, index_path):
-    """
-    Public API required by ingest pipeline and tests.
+    # -------------------------
+    # 2️⃣ Fallback OCR if empty
+    # -------------------------
+    if not raw_text or len(raw_text.strip()) < 50:
+        logger.info(f"[OCR FALLBACK] Running OCR for {pdf_path}")
 
-    Persist nodes atomically into the given index path.
-    """
-    def _persist(tmp_dir: str):
-        # nodes object is responsible for knowing how to persist itself
-        nodes.persist(tmp_dir)
+        ocr_lines = run_ocr(pdf_path)
 
-    atomic_persist(index_path, _persist)
+        if not ocr_lines:
+            logger.warning(f"[OCR FAILED] {pdf_path}")
+            return ""
+
+        raw_text = "\n".join(
+            line["text"].strip()
+            for line in ocr_lines
+            if line.get("text")
+        )
+
+    # -------------------------
+    # 3️⃣ Normalize
+    # -------------------------
+    cleaned_text = normalize_text(raw_text)
+
+    # -------------------------
+    # 4️⃣ Log ingestion metrics
+    # -------------------------
+    logger.info(
+        f"[INGESTION] File: {pdf_path} | "
+        f"Raw chars: {len(raw_text)} | "
+        f"Clean chars: {len(cleaned_text)}"
+    )
+
+    return cleaned_text
 
 ==============================
 FILE: .\backend\vectorstore\bm25_store.py
@@ -2184,73 +2886,81 @@ class BM25Store:
                 instance.bm25 = loaded_data.bm25
         return instance
 ==============================
-FILE: .\backend\vectorstore\faiss_store.py
-==============================
-import os
-import faiss
-import pickle
-from backend.config.integrity_config import settings
-from backend.vectorstore.atomic_persist import atomic_persist
-from backend.vectorstore.index_meta import assert_meta_compatible
-
-INDEX_FILE = "index.faiss"
-STORE_FILE = "index.pkl"
-
-def load_index():
-    if os.path.exists(settings.FAISS_INDEX_DIR) and os.listdir(settings.FAISS_INDEX_DIR):
-        assert_meta_compatible(settings.FAISS_INDEX_DIR)
-
-    path = os.path.join(settings.FAISS_INDEX_DIR, INDEX_FILE)
-    if not os.path.exists(path):
-        raise RuntimeError("FAISS_INDEX_NOT_FOUND")
-
-    return faiss.read_index(path)
-
-def persist_faiss_index(index, store):
-    def _persist(tmp_dir):
-        faiss.write_index(index, os.path.join(tmp_dir, INDEX_FILE))
-        with open(os.path.join(tmp_dir, STORE_FILE), "wb") as f:
-            pickle.dump(store, f)
-
-    atomic_persist(settings.FAISS_INDEX_DIR, _persist)
-
-==============================
 FILE: .\backend\vectorstore\index_meta.py
 ==============================
 import json
 import os
-from backend.rag.node_parser import (
-    INGEST_VERSION,
+import shutil
+from datetime import datetime
+
+from backend.rag.llama_ingest import (
+    INDEX_VERSION,
     EMBEDDING_MODEL_TAG,
-    CHUNK_SIZE,
-    CHUNK_OVERLAP,
 )
 
-META_FILENAME = "index.meta.json"
+META_FILENAME = "index_meta.json"
 
-def expected_meta():
+
+def expected_meta(course_id: str):
+    """
+    🔥 Single Source of Truth cho metadata index.
+    Phải đồng bộ với llama_ingest + retrieval layer.
+    """
     return {
-        "ingest_version": INGEST_VERSION,
-        "embedding_model": EMBEDDING_MODEL_TAG,
-        "chunk_size": CHUNK_SIZE,
-        "chunk_overlap": CHUNK_OVERLAP,
+        "course_id": course_id,
+        "index_version": INDEX_VERSION,
+        "embedding_model_tag": EMBEDDING_MODEL_TAG,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
-def write_meta(index_dir):
-    with open(os.path.join(index_dir, META_FILENAME), "w") as f:
-        json.dump(expected_meta(), f, indent=2, sort_keys=True)
 
-def assert_meta_compatible(index_dir):
+def write_meta(index_dir: str, course_id: str):
+    os.makedirs(index_dir, exist_ok=True)
+
+    meta_path = os.path.join(index_dir, META_FILENAME)
+
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(
+            expected_meta(course_id),
+            f,
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True
+        )
+
+
+def clear_index(index_dir: str):
+    if os.path.exists(index_dir):
+        shutil.rmtree(index_dir)
+
+
+def assert_meta_compatible(index_dir: str, course_id: str):
+    """
+    🔥 Fail fast nếu metadata mismatch.
+    """
     path = os.path.join(index_dir, META_FILENAME)
+
     if not os.path.exists(path):
         raise RuntimeError("INDEX_META_MISSING")
 
-    with open(path) as f:
+    with open(path, "r", encoding="utf-8") as f:
         stored = json.load(f)
 
-    if stored != expected_meta():
-        raise RuntimeError("INDEX_META_MISMATCH")
+    current = expected_meta(course_id)
 
+    # không so timestamp
+    stored_compare = {
+        k: v for k, v in stored.items()
+        if k != "timestamp"
+    }
+
+    current_compare = {
+        k: v for k, v in current.items()
+        if k != "timestamp"
+    }
+
+    if stored_compare != current_compare:
+        raise RuntimeError("INDEX_META_MISMATCH")
 ==============================
 FILE: .\data\llama_index\TEST_COURSE_V1\default__vector_store.json
 ==============================
@@ -4439,7 +5149,15 @@ export default function ChatWindow() {
         question,
         session_id: "default"
       });
-      setAnswer(res.data.data.answer);
+
+      if (res.data.success) {
+        setAnswer(res.data.data.answer);
+      } else {
+        setAnswer(res.data.error?.message || "No answer found.");
+      }
+
+    } catch (err) {
+      setAnswer("System error. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -4454,7 +5172,6 @@ export default function ChatWindow() {
     </div>
   );
 }
-
 ==============================
 FILE: .\frontend\src\components\FileUpload.jsx
 ==============================

@@ -10,6 +10,7 @@ class Evidence(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     session_id: str
+    course_id: str
 
 
 class ChatResponse(BaseModel):
