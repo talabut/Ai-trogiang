@@ -1,0 +1,117 @@
+[
+  {
+    "id": 1,
+    "question": "Hallucination trong AI trợ giảng là gì?",
+    "expected_keywords": [
+      "hallucination",
+      "thông tin không chính xác",
+      "suy đoán",
+      "gây hiểu nhầm"
+    ],
+    "expected_sources": ["CH1_GioiThieu"],
+    "type": "definition"
+  },
+  {
+    "id": 2,
+    "question": "Mục tiêu chính của đề tài là gì?",
+    "expected_keywords": [
+      "xây dựng mô-đun",
+      "đánh giá chất lượng",
+      "Machine Learning",
+      "câu trả lời"
+    ],
+    "expected_sources": ["CH1_GioiThieu"],
+    "type": "definition"
+  },
+  {
+    "id": 3,
+    "question": "Bài toán đánh giá chất lượng câu trả lời thuộc loại học gì?",
+    "expected_keywords": [
+      "supervised learning",
+      "học có giám sát",
+      "phân loại"
+    ],
+    "expected_sources": ["CH2_CoSoLyThuyet"],
+    "type": "conceptual"
+  },
+  {
+    "id": 4,
+    "question": "TF-IDF được sử dụng để làm gì trong đề tài?",
+    "expected_keywords": [
+      "biểu diễn văn bản",
+      "vector",
+      "tần suất",
+      "từ khóa"
+    ],
+    "expected_sources": ["CH2_CoSoLyThuyet"],
+    "type": "conceptual"
+  },
+  {
+    "id": 5,
+    "question": "Sentence-BERT được dùng để tính gì?",
+    "expected_keywords": [
+      "sentence embedding",
+      "cosine similarity",
+      "độ tương đồng ngữ nghĩa"
+    ],
+    "expected_sources": ["CH2_CoSoLyThuyet"],
+    "type": "conceptual"
+  },
+  {
+    "id": 6,
+    "question": "Tại sao đề tài chọn Logistic Regression?",
+    "expected_keywords": [
+      "đơn giản",
+      "phù hợp dữ liệu nhỏ",
+      "phân loại tuyến tính"
+    ],
+    "expected_sources": ["CH2_CoSoLyThuyet"],
+    "type": "why"
+  },
+  {
+    "id": 7,
+    "question": "Precision và Recall khác nhau như thế nào?",
+    "expected_keywords": [
+      "precision",
+      "recall",
+      "phát hiện",
+      "dự đoán đúng"
+    ],
+    "expected_sources": ["CH2_CoSoLyThuyet"],
+    "type": "comparison"
+  },
+  {
+    "id": 8,
+    "question": "Cross-validation được dùng để làm gì?",
+    "expected_keywords": [
+      "đánh giá mô hình",
+      "chia dữ liệu",
+      "trung bình kết quả"
+    ],
+    "expected_sources": ["CH4_MoHinh"],
+    "type": "conceptual"
+  },
+  {
+    "id": 9,
+    "question": "Đặc trưng thủ công bao gồm những gì?",
+    "expected_keywords": [
+      "độ dài",
+      "bao phủ từ vựng",
+      "không chắc chắn",
+      "lặp từ"
+    ],
+    "expected_sources": ["CH4_MoHinh"],
+    "type": "list"
+  },
+  {
+    "id": 10,
+    "question": "Vai trò của mô-đun đánh giá trong hệ thống Ai-trogiang là gì?",
+    "expected_keywords": [
+      "kiểm soát chất lượng",
+      "trước khi hiển thị",
+      "yêu cầu sinh lại"
+    ],
+    "expected_sources": ["CH4_MoHinh"],
+    "type": "conceptual"
+  }
+]

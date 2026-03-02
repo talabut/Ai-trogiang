@@ -6,6 +6,7 @@ from pathlib import Path
 
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
 from llama_index.core.schema import NodeWithScore
+from llama_index.retrievers.bm25 import BM25Retriever
 import backend.infra.rag.llama_settings
 
 from backend.rag.llama_ingest import get_index_path, INDEX_VERSION, EMBEDDING_MODEL_TAG
@@ -82,6 +83,12 @@ class LlamaRetriever:
         self.retriever = self.index.as_retriever(
             similarity_top_k=self.top_k
         )
+        
+        # 🔥 BM25 Retriever (keyword)
+        self.bm25_retriever = BM25Retriever.from_defaults(
+            docstore=self.index.docstore,
+            similarity_top_k=self.top_k
+        )
 
         logger.info(
             f"[Retrieval] Loaded index | "
@@ -90,31 +97,45 @@ class LlamaRetriever:
         )
 
     def retrieve(self, query: str) -> List[NodeWithScore]:
-        """
-        Retrieve top_k nodes và log score để debug recall.
-        """
+
         logger.info(
-            f"[Retrieval] Query='{query}' | course_id={self.course_id} | top_k={self.top_k}"
+            f"[Hybrid Retrieval] Query='{query}' | course_id={self.course_id}"
         )
 
-        nodes: List[NodeWithScore] = self.retriever.retrieve(query)
+        # === Dense ===
+        dense_nodes: List[NodeWithScore] = self.retriever.retrieve(query)
 
-        if not nodes:
+        # === BM25 ===
+        bm25_nodes: List[NodeWithScore] = self.bm25_retriever.retrieve(query)
+
+        # === Merge (deduplicate by node_id) ===
+        combined = dense_nodes + bm25_nodes
+
+        seen = set()
+        merged_nodes = []
+
+        for node in combined:
+            node_id = node.node.node_id
+            if node_id not in seen:
+                merged_nodes.append(node)
+                seen.add(node_id)
+
+        if not merged_nodes:
             logger.warning(
-                f"[Retrieval] EMPTY RESULT | course_id={self.course_id}"
+                f"[Hybrid Retrieval] EMPTY RESULT | course_id={self.course_id}"
             )
             return []
 
-        # 🔴 Log score + preview nội dung
-        for i, node in enumerate(nodes):
+        # Log preview
+        for i, node in enumerate(merged_nodes[:5]):
             score = node.score
             text_preview = node.node.get_content()[:200].replace("\n", " ")
 
             logger.info(
-                f"[Retrieval] Rank={i+1} | Score={score:.4f} | Preview='{text_preview}'"
+                f"[Hybrid] Rank={i+1} | Score={score} | Preview='{text_preview}'"
             )
 
-        return nodes
+        return merged_nodes[: self.top_k * 2]  # return extra, reranker sẽ lọc
 def retrieve(
     query: str,
     course_id: str,

@@ -1,15 +1,13 @@
-import api from "./client";
+import client from "./client";
 
-export function uploadFile(file, onProgress) {
-  const form = new FormData();
-  form.append("file", file);
+export const uploadFile = async (file, courseId) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("course_id", courseId);
 
-  return api.post("/upload", form, {
+  const res = await client.post("/upload", formData, {
     headers: { "Content-Type": "multipart/form-data" },
-    onUploadProgress: e => {
-      if (onProgress) {
-        onProgress(Math.round((e.loaded * 100) / e.total));
-      }
-    }
   });
-}
+
+  return res.data;
+};

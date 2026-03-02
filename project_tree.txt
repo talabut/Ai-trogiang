@@ -7,10 +7,14 @@
 │   ├── package-lock.json
 │   ├── package.json
 │   ├── project_code.txt
+│   ├── project_tree.txt
+│   ├── query
 │   ├── README.md
 │   ├── requirements.txt
 │   ├── .ingest_locks/
 │   │   ├── string.lock
+│   ├── .vscode/
+│   │   ├── settings.json
 │   ├── backend/
 │   │   ├── bootstrap.py
 │   │   ├── startup_validator.py
@@ -35,8 +39,11 @@
 │   │   ├── db/
 │   │   │   ├── sqlite_safe.py
 │   │   ├── infra/
+│   │   │   ├── __init__.py
 │   │   │   ├── rag/
+│   │   │   │   ├── llama_settings.py
 │   │   │   │   ├── retrieval_impl.py
+│   │   │   │   ├── __init__.py
 │   │   ├── locks/
 │   │   │   ├── ingest_lock.py
 │   │   ├── middleware/
@@ -55,8 +62,9 @@
 │   │   ├── services/
 │   │   │   ├── agent.py
 │   │   │   ├── llm.py
-│   │   ├── test/
-│   │   │   ├── test_retrieval_debug.py
+│   │   │   ├── query_expander.py
+│   │   │   ├── query_rewriter.py
+│   │   │   ├── reranker.py
 │   │   ├── utils/
 │   │   │   ├── memory_guard.py
 │   │   │   ├── ocr.py
@@ -66,60 +74,53 @@
 │   │   │   ├── index_meta.py
 │   ├── data/
 │   │   ├── app_database.db
-│   │   ├── bm25_Ml101.pkl
-│   │   ├── bm25/
 │   │   ├── faiss_index/
-│   │   │   ├── string/
-│   │   │   ├── ts1/
-│   │   │   │   ├── index_meta.json
-│   │   │   ├── ts2/
-│   │   │   │   ├── index_meta.json
-│   │   ├── llama_index/
-│   │   │   ├── TEST_COURSE_V1/
+│   │   │   ├── ml_course/
 │   │   │   │   ├── default__vector_store.json
 │   │   │   │   ├── docstore.json
 │   │   │   │   ├── graph_store.json
 │   │   │   │   ├── image__vector_store.json
+│   │   │   │   ├── index_meta.json
 │   │   │   │   ├── index_store.json
 │   │   ├── raw_docs/
-│   │   │   ├── .gitkeep
-│   │   │   ├── string/
+│   │   │   ├── ml_course/
 │   │   │   │   ├── sample.pdf
-│   │   │   ├── ts1/
-│   │   │   │   ├── sample.pdf
-│   │   │   ├── ts2/
-│   │   │   │   ├── sample.pdf
-│   │   ├── uploads/
-│   │   │   ├── test_scan.pdf
 │   ├── dummy_path/
 │   ├── frontend/
+│   │   ├── eslint.config.js
 │   │   ├── index.html
 │   │   ├── package-lock.json
 │   │   ├── package.json
+│   │   ├── README.md
 │   │   ├── vite.config.js
+│   │   ├── public/
+│   │   │   ├── vite.svg
 │   │   ├── src/
 │   │   │   ├── App.jsx
 │   │   │   ├── main.jsx
 │   │   │   ├── api/
+│   │   │   │   ├── chat.js
 │   │   │   │   ├── client.js
+│   │   │   │   ├── health.js
 │   │   │   │   ├── upload.js
 │   │   │   ├── components/
-│   │   │   │   ├── ChatBox.jsx
-│   │   │   │   ├── ChatWindow.jsx
-│   │   │   │   ├── FileUpload.jsx
-│   │   │   │   ├── UploadForm.jsx
+│   │   │   │   ├── chat/
+│   │   │   │   │   ├── ChatWindow.jsx
+│   │   │   │   │   ├── InputBox.jsx
+│   │   │   │   │   ├── MessageBubble.jsx
+│   │   │   │   ├── layout/
+│   │   │   │   │   ├── ChatLayout.jsx
+│   │   │   │   │   ├── Sidebar.jsx
+│   │   │   │   ├── upload/
+│   │   │   │   │   ├── UploadPanel.jsx
+│   │   │   ├── hooks/
+│   │   │   │   ├── useChat.js
+│   │   │   ├── styles/
+│   │   │   │   ├── global.css
 │   ├── tests/
-│   │   ├── conftest.py
-│   │   ├── test_chat_api.py
-│   │   ├── test_concurrent_ingest.py
-│   │   ├── test_contract_api.py
-│   │   ├── test_import_boot.py
-│   │   ├── test_integrity_fail.py
-│   │   ├── test_llama_ingest_strict.py
-│   │   ├── test_rate_limit.py
-│   │   ├── test_sandbox_enforcement.py
-│   │   ├── test_strict_chunking.py
-│   │   ├── test_upload_api.py
+│   │   ├── evaluation/
+│   │   │   ├── run_eval.py
+│   │   │   ├── test_set.json
 │   │   ├── fixtures/
 │   │   │   ├── sample.pdf
 │   ├── uploads/

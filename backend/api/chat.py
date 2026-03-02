@@ -30,7 +30,7 @@ def chat(req: ChatRequest):
         "data": {
             "answer": result["answer"],
             "evidence_count": len(result["evidences"]),
-            "sources": result["sources"],
+            "sources": result.get("sources", []),
             "ingest_status": "READY",
             "refusal": False,
             "reason": result.get("reason")

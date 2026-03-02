@@ -9,13 +9,7 @@ OLLAMA_HOST = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_URL = f"{OLLAMA_HOST}/api/generate" 
 MODEL_NAME = "phi3:latest"
 
-
 def generate_answer(prompt: str) -> str:
-    """
-    Generate answer from Ollama (phi3:latest).
-    Strict low-temperature config for RAG grounding.
-    """
-
     try:
         response = requests.post(
             OLLAMA_URL,
@@ -24,8 +18,10 @@ def generate_answer(prompt: str) -> str:
                 "prompt": prompt,
                 "stream": False,
                 "options": {
-                    "temperature": 0.1,   # 🔥 giảm hallucination
-                    "top_p": 0.9
+                    "temperature": 0.0,
+                    "top_p": 0.9,
+                    "num_ctx": 768,        # ↓ giảm từ 1024
+                    "num_predict": 200     # giới hạn output length
                 }
             },
             timeout=60
@@ -42,4 +38,5 @@ def generate_answer(prompt: str) -> str:
         )
 
     except Exception as e:
+        print(response.text)
         raise RuntimeError(f"LLM generation failed: {str(e)}")
