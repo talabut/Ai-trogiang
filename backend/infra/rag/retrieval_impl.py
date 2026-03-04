@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 class LlamaRetriever:
     """
     Retrieval layer cho RAG system.
-    - Luôn trả top_k (3–5)
-    - Không dùng threshold cứng
-    - Fail fast nếu index meta mismatch
+    - Luon tra top_k (3-5)
+    - Khong dung threshold cung
+    - Fail fast neu index meta mismatch
     """
 
     def __init__(self, course_id: str, top_k: int = 5):
@@ -36,12 +36,8 @@ class LlamaRetriever:
 
         if not index_path.exists():
             raise ValueError(
-                f"[Retrieval] Index path không tồn tại cho course_id={course_id}: {index_path}"
+                f"[Retrieval] Index path khong ton tai cho course_id={course_id}: {index_path}"
             )
-
-        # =========================
-        # 🔥 VALIDATE INDEX META
-        # =========================
 
         meta_path = index_path / "index_meta.json"
 
@@ -70,10 +66,6 @@ class LlamaRetriever:
                 f"Expected={EMBEDDING_MODEL_TAG} | Found={meta.get('embedding_model_tag')}"
             )
 
-        # =========================
-        # LOAD STORAGE
-        # =========================
-
         storage_context = StorageContext.from_defaults(
             persist_dir=str(index_path)
         )
@@ -83,8 +75,7 @@ class LlamaRetriever:
         self.retriever = self.index.as_retriever(
             similarity_top_k=self.top_k
         )
-        
-        # 🔥 BM25 Retriever (keyword)
+
         self.bm25_retriever = BM25Retriever.from_defaults(
             docstore=self.index.docstore,
             similarity_top_k=self.top_k
@@ -97,22 +88,15 @@ class LlamaRetriever:
         )
 
     def retrieve(self, query: str) -> List[NodeWithScore]:
+        logger.info(f'[RAG] query="{query}" | course_id={self.course_id}')
 
-        logger.info(
-            f"[Hybrid Retrieval] Query='{query}' | course_id={self.course_id}"
-        )
-
-        # === Dense ===
         dense_nodes: List[NodeWithScore] = self.retriever.retrieve(query)
-
-        # === BM25 ===
         bm25_nodes: List[NodeWithScore] = self.bm25_retriever.retrieve(query)
 
-        # === Merge (deduplicate by node_id) ===
         combined = dense_nodes + bm25_nodes
 
         seen = set()
-        merged_nodes = []
+        merged_nodes: List[NodeWithScore] = []
 
         for node in combined:
             node_id = node.node.node_id
@@ -120,22 +104,22 @@ class LlamaRetriever:
                 merged_nodes.append(node)
                 seen.add(node_id)
 
+        logger.info(f"[RAG] retrieved_nodes={len(merged_nodes)}")
+
         if not merged_nodes:
             logger.warning(
-                f"[Hybrid Retrieval] EMPTY RESULT | course_id={self.course_id}"
+                f"[RAG] decision=NO_MATCH | course_id={self.course_id}"
             )
             return []
 
-        # Log preview
-        for i, node in enumerate(merged_nodes[:5]):
+        for i, node in enumerate(merged_nodes[:5], start=1):
             score = node.score
-            text_preview = node.node.get_content()[:200].replace("\n", " ")
+            reason = "NO_SCORE" if score is None else ("LOW_SIMILARITY" if score < 0.2 else "CANDIDATE")
+            logger.info(f"[RAG] node_{i} score={score} reason={reason}")
 
-            logger.info(
-                f"[Hybrid] Rank={i+1} | Score={score} | Preview='{text_preview}'"
-            )
+        return merged_nodes[: self.top_k * 2]
 
-        return merged_nodes[: self.top_k * 2]  # return extra, reranker sẽ lọc
+
 def retrieve(
     query: str,
     course_id: str,
@@ -143,7 +127,7 @@ def retrieve(
 ) -> List[NodeWithScore]:
     """
     Canonical retrieval entry-point cho Agent layer.
-    Agent KHÔNG được khởi tạo retriever trực tiếp.
+    Agent KHONG duoc khoi tao retriever truc tiep.
     """
     retriever = LlamaRetriever(course_id=course_id, top_k=top_k)
     return retriever.retrieve(query)

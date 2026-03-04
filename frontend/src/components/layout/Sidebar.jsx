@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { checkHealth } from "../../api/health";
 import UploadPanel from "../upload/UploadPanel";
 
-const Sidebar = () => {
+const Sidebar = ({ courseId }) => {
   const [status, setStatus] = useState("checking");
 
   useEffect(() => {
@@ -17,7 +17,7 @@ const Sidebar = () => {
       <div className={`health ${status}`}>
         Backend: {status}
       </div>
-      <UploadPanel />
+      <UploadPanel courseId={courseId} />
     </div>
   );
 };

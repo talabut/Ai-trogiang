@@ -3,8 +3,7 @@ import { useChat } from "../../hooks/useChat";
 import MessageBubble from "./MessageBubble";
 import InputBox from "./InputBox";
 
-const ChatWindow = () => {
-  const [courseId, setCourseId] = useState("ml_course");
+const ChatWindow = ({ courseId, setCourseId }) => {
   const [sessionId, setSessionId] = useState("session_1");
 
   const { messages, ask, loading } = useChat(courseId, sessionId);

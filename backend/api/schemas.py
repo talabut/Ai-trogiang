@@ -1,10 +1,16 @@
 from typing import List, Optional
+
 from pydantic import BaseModel
 
 
 class Evidence(BaseModel):
     text: str
     metadata: dict
+
+
+class RetrievalStats(BaseModel):
+    nodes_found: int
+    max_score: float
 
 
 class ChatRequest(BaseModel):
@@ -14,10 +20,12 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    answer: str
-    evidence_count: int
-    sources: List[str]
-    ingest_status: str
+    answer: Optional[str] = None
+    evidence_count: int = 0
+    sources: List[str] = []
+    ingest_status: str = "READY"
     refusal: bool = False
     reason: Optional[str] = None
+    message: Optional[str] = None
+    retrieval_stats: Optional[RetrievalStats] = None
     tool_schema_version: str = "rag.v1"

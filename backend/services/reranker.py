@@ -1,5 +1,10 @@
+import logging
+
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+
+logger = logging.getLogger(__name__)
 
 
 class CrossEncoderReranker:
@@ -7,7 +12,7 @@ class CrossEncoderReranker:
         self,
         model_name="BAAI/bge-reranker-base",
         device=None,
-        batch_size=8
+        batch_size=8,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.batch_size = batch_size
@@ -23,7 +28,10 @@ class CrossEncoderReranker:
         """
 
         if not evidences:
+            logger.info("[RAG] reranker_input=0")
             return []
+
+        logger.info(f"[RAG] reranker_input={len(evidences)}")
 
         pairs = [[query, ev["text"]] for ev in evidences]
 
@@ -31,14 +39,14 @@ class CrossEncoderReranker:
 
         with torch.no_grad():
             for i in range(0, len(pairs), self.batch_size):
-                batch = pairs[i:i+self.batch_size]
+                batch = pairs[i : i + self.batch_size]
 
                 inputs = self.tokenizer(
                     batch,
                     padding=True,
                     truncation=True,
                     return_tensors="pt",
-                    max_length=512
+                    max_length=512,
                 )
 
                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
@@ -48,15 +56,19 @@ class CrossEncoderReranker:
 
                 scores.extend(batch_scores)
 
-        # attach scores
         for ev, score in zip(evidences, scores):
             ev["rerank_score"] = float(score)
 
-        # sort descending
         reranked = sorted(
             evidences,
             key=lambda x: x["rerank_score"],
-            reverse=True
+            reverse=True,
         )
 
-        return reranked[:top_n]
+        top_nodes = reranked[:top_n]
+        for idx, ev in enumerate(top_nodes, start=1):
+            logger.info(f"[RAG] rerank_node_{idx} score={ev.get('rerank_score')} reason=RERANK_KEEP")
+
+        logger.info(f"[RAG] reranker_output={len(top_nodes)}")
+
+        return top_nodes

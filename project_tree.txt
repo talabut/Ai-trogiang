@@ -7,7 +7,6 @@
 │   ├── package-lock.json
 │   ├── package.json
 │   ├── project_code.txt
-│   ├── project_tree.txt
 │   ├── query
 │   ├── README.md
 │   ├── requirements.txt
@@ -26,7 +25,9 @@
 │   │   ├── api/
 │   │   │   ├── chat.py
 │   │   │   ├── dependencies.py
+│   │   │   ├── document.py
 │   │   │   ├── health.py
+│   │   │   ├── quiz.py
 │   │   │   ├── schemas.py
 │   │   │   ├── upload.py
 │   │   │   ├── __init__.py
@@ -48,6 +49,10 @@
 │   │   │   ├── ingest_lock.py
 │   │   ├── middleware/
 │   │   │   ├── rate_limit.py
+│   │   ├── quiz/
+│   │   │   ├── schemas.py
+│   │   │   ├── service.py
+│   │   │   ├── __init__.py
 │   │   ├── rag/
 │   │   │   ├── canonicalize.py
 │   │   │   ├── chunking.py
@@ -65,6 +70,10 @@
 │   │   │   ├── query_expander.py
 │   │   │   ├── query_rewriter.py
 │   │   │   ├── reranker.py
+│   │   ├── summarize/
+│   │   │   ├── schemas.py
+│   │   │   ├── service.py
+│   │   │   ├── __init__.py
 │   │   ├── utils/
 │   │   │   ├── memory_guard.py
 │   │   │   ├── ocr.py
@@ -73,7 +82,6 @@
 │   │   │   ├── bm25_store.py
 │   │   │   ├── index_meta.py
 │   ├── data/
-│   │   ├── app_database.db
 │   │   ├── faiss_index/
 │   │   │   ├── ml_course/
 │   │   │   │   ├── default__vector_store.json

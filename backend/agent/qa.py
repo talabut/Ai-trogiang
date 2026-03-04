@@ -5,15 +5,15 @@ from typing import Dict, Any
 class QAAgent:
     """
     QAAgent:
-    - KHÔNG generate
-    - KHÔNG build prompt
-    - Chỉ kiểm tra retrieval result
+    - Khong generate
+    - Khong build prompt
+    - Chi kiem tra retrieval result
     """
 
     def answer(
         self,
         question: str,
-        tool_result: Dict[str, Any]
+        tool_result: Dict[str, Any],
     ) -> Dict[str, Any]:
 
         if tool_result is None:
@@ -28,15 +28,27 @@ class QAAgent:
             return {
                 "answer": None,
                 "confidence": 0.0,
-                "reason": "NOT_FOUND_IN_DATABASE",
+                "reason": "NO_MATCH",
                 "evidences": [],
-                "sources": []
+                "sources": [],
+                "retrieval_stats": tool_result.get(
+                    "retrieval_stats", {"nodes_found": 0, "max_score": 0.0}
+                ),
             }
 
         return {
-            "answer": None,  # LLM sẽ fill sau
+            "answer": None,
             "confidence": 0.5,
             "reason": "EVIDENCE_FOUND",
             "evidences": evidences,
-            "sources": tool_result.get("sources", [])
+            "sources": tool_result.get("sources", []),
+            "retrieval_stats": tool_result.get(
+                "retrieval_stats",
+                {
+                    "nodes_found": len(evidences),
+                    "max_score": max(
+                        (ev.get("score") or 0.0 for ev in evidences), default=0.0
+                    ),
+                },
+            ),
         }

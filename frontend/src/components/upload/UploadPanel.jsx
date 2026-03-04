@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { uploadFile } from "../../api/upload";
 
-const UploadPanel = () => {
+const UploadPanel = ({ courseId }) => {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -10,7 +10,7 @@ const UploadPanel = () => {
 
     setLoading(true);
     try {
-      await uploadFile(file, "ml_course");
+      await uploadFile(file, courseId);
       alert("Upload thành công!");
     } catch {
       alert("Upload thất bại!");
